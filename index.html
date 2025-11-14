@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Console Discord</title>
+    <style>
+        body {
+            background-color: #222;
+            color: #0f0;
+            font-family: 'Courier New', monospace;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        #main {
+            display: flex;
+            height: calc(100% - 60px); /* for input + voice bar */
+        }
+        #sidebar {
+            width: 30%;
+            border-right: 1px solid #0f0;
+            padding: 10px;
+            overflow-y: auto;
+        }
+        #search {
+            background: transparent;
+            color: #0f0;
+            border: none;
+            width: 100%;
+            font-size: 16px;
+        }
+        #chat {
+            width: 70%;
+            padding: 10px;
+            overflow-y: auto;
+        }
+        #input-area {
+            position: fixed;
+            bottom: 0;
+            left: 30%;
+            width: 70%;
+            background: #111;
+            border-top: 1px solid #0f0;
+            padding: 5px;
+            display: flex;
+            align-items: center;
+        }
+        #message-input {
+            background: transparent;
+            color: #0f0;
+            border: none;
+            flex: 1;
+            font-size: 16px;
+            outline: none;
+        }
+        .button {
+            color: #0f0;
+            background: transparent;
+            border: 1px solid #0f0;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            margin: 0 5px;
+            padding: 2px 6px;
+        }
+        .voice-recording {
+            color: #f00;
+        }
+        .audio-player {
+            display: inline-block;
+            margin-left: 10px;
+        }
+        .auth-input {
+            background: transparent;
+            color: #0f0;
+            border: none;
+            display: block;
+            margin: 5px 0;
+            width: 100%;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div id="main">
+        <div id="sidebar">
+            <input id="search" placeholder="> search friends...">
+            <div id="profile">
+                > my profile <button id="logout" class="button">logout</button>
+                <div id="my-id"></div>
+            </div>
+            <div id="pending-requests">
+                > Pending requests:
+                <div id="pending-list"></div>
+            </div>
+            <div id="friends-list">
+                > no friends
+            </div>
+        </div>
+        <div id="chat">
+            > select friend start chatting...
+        </div>
+    </div>
+    <div id="input-area">
+        <input id="message-input" placeholder="> type message...">
+        <button id="record-btn" class="button">mic</button>
+        <span id="record-status"></span>
+    </div>
+
+    <script>
+        let currentUser = localStorage.getItem('currentUser');
+        const usersKey = 'console_discord_users';
+        const lastVisitKey = 'console_discord_lastVisit';
+        let users = JSON.parse(localStorage.getItem(usersKey)) || {};
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isRecording = false;
+
+        // Check inactivity
+        let lastVisit = parseInt(localStorage.getItem(lastVisitKey)) || 0;
+        const now = Date.now();
+        const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
+        if (currentUser && now - lastVisit > THREE_DAYS) {
+            localStorage.removeItem('currentUser');
+            currentUser = null;
+        }
+        localStorage.setItem(lastVisitKey, now.toString());
+
+        function saveUsers() {
+            localStorage.setItem(usersKey, JSON.stringify(users));
+        }
+
+        function showLogin() {
+            document.getElementById('chat').innerHTML = `
+> Login to Console Discord
+<input id="username" class="auth-input" placeholder="> username">
+<input id="password" type="password" class="auth-input" placeholder="> password">
+<button id="auth-btn" class="button">login</button>
+<div style="margin-top:10px;">
+<button id="toggle-auth" class="button">register</button>
+</div>
+            `;
+            let authMode = 'login';
+            document.getElementById('auth-btn').onclick = () => {
+                const user = document.getElementById('username').value.trim();
+                const pass = document.getElementById('password').value.trim();
+                if (!user || !pass) return alert('> Enter username and password');
+                if (authMode === 'login') {
+                    if (!users[user] || users[user].password !== pass) return alert('> Invalid credentials');
+                    localStorage.setItem('currentUser', user);
+                    currentUser = user;
+                    localStorage.setItem(lastVisitKey, now.toString()); // Update on login
+                    initApp();
+                } else {
+                    if (users[user]) return alert('> User exists');
+                    users[user] = {
+                        password: pass,
+                        friends: [],
+                        pendingRequests: [],
+                        messages: {}
+                    };
+                    saveUsers();
+                    localStorage.setItem('currentUser', user);
+                    currentUser = user;
+                    localStorage.setItem(lastVisitKey, now.toString()); // Update on register
+                    initApp();
+                }
+            };
+            document.getElementById('toggle-auth').onclick = () => {
+                authMode = authMode === 'login' ? 'register' : 'login';
+                document.getElementById('auth-btn').textContent = authMode;
+                document.getElementById('toggle-auth').textContent = authMode === 'login' ? 'register' : 'login';
+            };
+            document.getElementById('sidebar').style.display = 'none';
+            document.getElementById('input-area').style.display = 'none';
+        }
+
+        let selectedFriend = null;
+
+        function initApp() {
+            document.getElementById('sidebar').style.display = 'block';
+            document.getElementById('input-area').style.display = 'flex';
+            document.getElementById('my-id').innerText = `> ID: ${currentUser}`;
+            document.getElementById('logout').onclick = () => {
+                localStorage.removeItem('currentUser');
+                location.reload();
+            };
+
+            refreshFriends();
+
+            // Text message
+            document.getElementById('message-input').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && selectedFriend) {
+                    const msg = e.target.value.trim();
+                    if (msg) {
+                        sendMessage(msg, 'text');
+                    }
+                    e.target.value = '';
+                }
+            });
+
+            // Voice recording
+            const recordBtn = document.getElementById('record-btn');
+            const recordStatus = document.getElementById('record-status');
+
+            recordBtn.onclick = async () => {
+                if (!selectedFriend) return alert('> Select a friend first');
+                if (isRecording) {
+                    stopRecording();
+                } else {
+                    startRecording();
+                }
+            };
+
+            async function startRecording() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+
+                    mediaRecorder.ondataavailable = e => {
+                        audioChunks.push(e.data);
+                    };
+
+                    mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        const reader = new FileReader();
+                        reader.readAsDataURL(audioBlob);
+                        reader.onloadend = () => {
+                            const base64data = reader.result;
+                            sendMessage(base64data, 'voice');
+                        };
+                        stream.getTracks().forEach(track => track.stop());
+                    };
+
+                    mediaRecorder.start();
+                    isRecording = true;
+                    recordBtn.classList.add('voice-recording');
+                    recordBtn.textContent = 'stop';
+                    recordStatus.textContent = '> recording...';
+                } catch (err) {
+                    alert('> Microphone access denied or not available');
+                }
+            }
+
+            function stopRecording() {
+                if (mediaRecorder && isRecording) {
+                    mediaRecorder.stop();
+                    isRecording = false;
+                    recordBtn.classList.remove('voice-recording');
+                    recordBtn.textContent = 'mic';
+                    recordStatus.textContent = '';
+                }
+            }
+
+            // Search friends
+            document.getElementById('search').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    const searchUser = e.target.value.trim();
+                    if (searchUser && searchUser !== currentUser && users[searchUser]) {
+                        if (!users[currentUser].friends.includes(searchUser) && 
+                            !users[searchUser].pendingRequests.includes(currentUser)) {
+                            users[searchUser].pendingRequests.push(currentUser);
+                            saveUsers();
+                            alert(`> Friend request sent to ${searchUser}`);
+                        } else {
+                            alert('> Already friends or request pending');
+                        }
+                    } else {
+                        alert('> User not found or invalid');
+                    }
+                    e.target.value = '';
+                }
+            });
+
+            setInterval(refreshAll, 2000);
+        }
+
+        function sendMessage(content, type) {
+            if (!selectedFriend) return;
+
+            const messageObj = {
+                from: currentUser,
+                type: type,
+                content: content,
+                time: new Date().toISOString()
+            };
+
+            if (!users[currentUser].messages[selectedFriend]) {
+                users[currentUser].messages[selectedFriend] = [];
+            }
+            users[currentUser].messages[selectedFriend].push(messageObj);
+
+            if (!users[selectedFriend].messages[currentUser]) {
+                users[selectedFriend].messages[currentUser] = [];
+            }
+            users[selectedFriend].messages[currentUser].push(messageObj);
+
+            saveUsers();
+            refreshChat();
+        }
+
+        function refreshAll() {
+            users = JSON.parse(localStorage.getItem(usersKey)) || {};
+            refreshFriends();
+            if (selectedFriend) refreshChat();
+        }
+
+        function refreshFriends() {
+            const fl = document.getElementById('friends-list');
+            const friends = users[currentUser]?.friends || [];
+            if (friends.length === 0) {
+                fl.innerHTML = '> no friends';
+            } else {
+                fl.innerHTML = friends.map(f => `<div class="friend" data-user="${f}" style="cursor: pointer;">> ${f}</div>`).join('');
+                document.querySelectorAll('.friend').forEach(el => {
+                    el.onclick = () => {
+                        selectedFriend = el.dataset.user;
+                        refreshChat();
+                        document.getElementById('message-input').focus();
+                    };
+                });
+            }
+
+            const pl = document.getElementById('pending-list');
+            const pending = users[currentUser]?.pendingRequests || [];
+            if (pending.length === 0) {
+                pl.innerHTML = '';
+            } else {
+                pl.innerHTML = pending.map(p => `
+> ${p} <button class="button accept" data-user="${p}">accept</button> <button class="button decline" data-user="${p}">decline</button>
+                `).join('');
+                document.querySelectorAll('.accept').forEach(btn => {
+                    btn.onclick = () => {
+                        const u = btn.dataset.user;
+                        users[currentUser].friends.push(u);
+                        users[u].friends.push(currentUser);
+                        users[currentUser].pendingRequests = users[currentUser].pendingRequests.filter(x => x !== u);
+                        saveUsers();
+                        refreshFriends();
+                    };
+                });
+                document.querySelectorAll('.decline').forEach(btn => {
+                    btn.onclick = () => {
+                        const u = btn.dataset.user;
+                        users[currentUser].pendingRequests = users[currentUser].pendingRequests.filter(x => x !== u);
+                        saveUsers();
+                        refreshFriends();
+                    };
+                });
+            }
+        }
+
+        function refreshChat() {
+            if (!selectedFriend) {
+                document.getElementById('chat').innerHTML = '> select friend start chatting...';
+                return;
+            }
+            const chat = document.getElementById('chat');
+            const msgs = users[currentUser]?.messages[selectedFriend] || [];
+            chat.innerHTML = `> Chat with ${selectedFriend}<br>` + 
+                msgs.map(m => {
+                    if (m.type === 'text') {
+                        return `> ${m.from}: ${m.content}`;
+                    } else {
+                        return `> ${m.from}: [VOICE] <audio controls class="audio-player" src="${m.content}"></audio>`;
+                    }
+                }).join('<br>');
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        // Init
+        if (!currentUser) {
+            showLogin();
+        } else {
+            if (!users[currentUser]) {
+                localStorage.removeItem('currentUser');
+                showLogin();
+            } else {
+                initApp();
+            }
+        }
+    </script>
+</body>
+</html>
