@@ -301,12 +301,13 @@
             const callBtn = document.getElementById('call-btn');
             callBtn.onclick = () => {
                 if (!selectedFriend) return alert('> Select a friend first');
-                if (!users[currentUser].callStates[selectedFriend]) {
+                const myCallState = users[currentUser].callStates[selectedFriend];
+                if (!myCallState || myCallState.status === 'ended') {
                     users[currentUser].callStates[selectedFriend] = {status: 'calling', mic: true, screen: false};
                     users[selectedFriend].callStates[currentUser] = {status: 'incoming', mic: false, screen: false};
                     saveUsers();
                     alert(`> Calling ${selectedFriend}...`);
-                } else if (users[currentUser].callStates[selectedFriend].status === 'active') {
+                } else if (myCallState.status === 'active') {
                     // End call
                     endCall();
                 }
@@ -331,6 +332,7 @@
                         localVideo.remove();
                         localVideo = null;
                     }
+                    refreshChat(); // Force refresh to update UI
                 }
             }
 
@@ -472,7 +474,7 @@
             if (callState.status === 'calling') {
                 html += `<div class="call-notification">> Calling ${selectedFriend}... <button class="button" onclick="endCall()">End</button></div>`;
                 document.getElementById('call-btn').textContent = 'end';
-            } else if (friendCallState.status === 'incoming') {
+            } else if (friendCallState.status === 'calling') {  // Fixed: Check if friend is calling ME (their state to me is 'calling')
                 html += `<div class="call-notification">> Incoming call from ${selectedFriend}! <button class="button" onclick="acceptCall()">Accept</button> <button class="button" onclick="rejectCall()">Reject</button></div>`;
             } else if (callState.status === 'active') {
                 html += `<div class="call-notification">> Call active with ${selectedFriend}</div>`;
@@ -509,6 +511,7 @@
                 users[selectedFriend].callStates[currentUser] = {status: 'active', mic: true, screen: false};
                 saveUsers();
                 await startLocalCall();
+                refreshChat(); // Force refresh after accept
             }
         };
 
@@ -516,6 +519,7 @@
             if (selectedFriend) {
                 users[selectedFriend].callStates[currentUser] = {status: 'ended', mic: false, screen: false};
                 saveUsers();
+                refreshChat(); // Force refresh after reject
             }
         };
 
@@ -608,12 +612,6 @@
                         screenVideo.autoplay = true;
                         screenVideo.muted = true;
                         screenVideo.className = 'screen-video';
-                        document.getElementById('chat').appendChild(screenVideo);
-
-                        // Add to peer connection
-                        if (peerConnection) {
-                            screenStream.getTracks().forEach(track => peerConnection.addTrack(track, screenStream));
-                        }
 
                         users[currentUser].callStates[selectedFriend].screen = true;
                         users[selectedFriend].callStates[currentUser].screen = true; // Sync
@@ -623,6 +621,8 @@
                         if (dataChannel && dataChannel.readyState === 'open') {
                             dataChannel.send(JSON.stringify({ type: 'screen', enabled: true }));
                         }
+
+                        refreshChat(); // Refresh to show video
                     } catch (err) {
                         alert('> Screen share denied');
                     }
@@ -636,8 +636,8 @@
                     if (dataChannel && dataChannel.readyState === 'open') {
                         dataChannel.send(JSON.stringify({ type: 'screen', enabled: false }));
                     }
+                    refreshChat();
                 }
-                refreshChat();
             }
         }
 
