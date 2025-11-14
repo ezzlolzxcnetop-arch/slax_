@@ -7,11 +7,11 @@
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js';
         import { getDatabase, ref, onValue, set, update, push, get } from 'https://www.gstatic.com/firebasejs/10.13.1/firebase-database.js';
 
-        // Your Firebase config (added databaseURL to fix the error)
+        // Your Firebase config (with explicit databaseURL to fix the warning)
         const firebaseConfig = {
             apiKey: "AIzaSyAHkdr6tAaUplSieZuK8r7bVu62tJPLjII",
             authDomain: "slax-chat.firebaseapp.com",
-            databaseURL: "https://slax-chat-default-rtdb.firebaseio.com/",  // Added this line
+            databaseURL: "https://slax-chat-default-rtdb.firebaseio.com/",
             projectId: "slax-chat",
             storageBucket: "slax-chat.firebasestorage.app",
             messagingSenderId: "1045228942622",
@@ -237,9 +237,11 @@
             document.getElementById('input-area').style.display = 'flex';
             document.getElementById('my-id').innerText = `> ID: ${currentUser}`;
             document.getElementById('logout').onclick = () => {
+                // Always show login on logout, regardless of state
                 if (unsubscribeUser) unsubscribeUser();
                 localStorage.removeItem('currentUser');
-                location.reload();
+                currentUser = null;
+                showLogin(); // Direct call to show login, no reload needed
             };
 
             const userRef = ref(db, `users/${currentUser}`);
@@ -453,222 +455,4 @@
                 pl.innerHTML = '';
             } else {
                 pl.innerHTML = pending.map(p => `
-> ${p} <button class="button accept" data-user="${p}">accept</button> <button class="button decline" data-user="${p}">decline</button>
-                `).join('');
-                document.querySelectorAll('.accept').forEach(btn => {
-                    btn.onclick = async () => {
-                        const u = btn.dataset.user;
-                        const updates = {};
-                        const myFriends = [...(userData.friends || []), u];
-                        updates[`users/${currentUser}/friends`] = myFriends;
-                        const friendSnap = await get(ref(db, `users/${u}`));
-                        const friendData = friendSnap.val();
-                        const friendFriends = [...(friendData.friends || []), currentUser];
-                        updates[`users/${u}/friends`] = friendFriends;
-                        const myPending = (userData.pendingRequests || []).filter(x => x !== u);
-                        updates[`users/${currentUser}/pendingRequests`] = myPending;
-                        update(ref(db), updates);
-                    };
-                });
-                document.querySelectorAll('.decline').forEach(btn => {
-                    btn.onclick = async () => {
-                        const u = btn.dataset.user;
-                        const myPending = (userData.pendingRequests || []).filter(x => x !== u);
-                        const updates = { [`users/${currentUser}/pendingRequests`]: myPending };
-                        update(ref(db), updates);
-                    };
-                });
-            }
-        }
-
-        function refreshChat() {
-            if (!selectedFriend) {
-                document.getElementById('chat').innerHTML = '> select friend start chatting...';
-                return;
-            }
-            const msgs = userData.messages[selectedFriend] || [];
-            let html = `> Chat with ${selectedFriend}<br>` + 
-                msgs.map(m => {
-                    if (m.type === 'text') {
-                        return `> ${m.from}: ${m.content}`;
-                    } else if (m.type === 'voice') {
-                        return `> ${m.from}: [VOICE] <audio controls class="audio-player" src="${m.content}"></audio>`;
-                    }
-                    return '';
-                }).join('<br>');
-
-            const callState = userData.callStates[selectedFriend] || {status: 'none'};
-            get(ref(db, `users/${selectedFriend}/callStates/${currentUser}`)).then(snapshot => {
-                const friendCallState = snapshot.val() || {status: 'none'};
-
-                if (callState.status === 'calling') {
-                    html += `<div class="call-notification">> Calling ${selectedFriend}... <button class="button" onclick="endCall()">End</button></div>`;
-                    document.getElementById('call-btn').textContent = 'end';
-                } else if (friendCallState.status === 'calling') {
-                    html += `<div class="call-notification">> Incoming call from ${selectedFriend}! <button class="button" onclick="acceptCall()">Accept</button> <button class="button" onclick="rejectCall()">Reject</button></div>`;
-                } else if (callState.status === 'active') {
-                    html += `<div class="call-notification">> Call active with ${selectedFriend}</div>`;
-                    html += `<div class="call-controls">
-> Mic: <button class="button" id="mic-toggle-btn" style="color: ${callState.mic ? '#0f0' : '#f00'}">${callState.mic ? 'mute' : 'unmute'}</button>
-> Screen: <button class="button" id="screen-toggle-btn" style="color: ${callState.screen ? '#0f0' : '#f00'}">${callState.screen ? 'stop share' : 'share'}</button>
-> <button class="button" onclick="endCall()">End Call</button>
-</div>`;
-                    setTimeout(() => {
-                        const micBtn = document.getElementById('mic-toggle-btn');
-                        if (micBtn) micBtn.onclick = toggleMic;
-                        const screenBtn = document.getElementById('screen-toggle-btn');
-                        if (screenBtn) screenBtn.onclick = toggleScreen;
-                    }, 0);
-                    document.getElementById('call-btn').textContent = 'end';
-                } else {
-                    document.getElementById('call-btn').textContent = 'call';
-                }
-
-                if (callState.screen && screenVideo) {
-                    html += screenVideo.outerHTML;
-                }
-
-                document.getElementById('chat').innerHTML = html;
-                document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
-            });
-        }
-
-        // Call functions
-        window.acceptCall = async () => {
-            if (selectedFriend) {
-                const updates = {};
-                updates[`users/${currentUser}/callStates/${selectedFriend}`] = {status: 'active', mic: true, screen: false};
-                updates[`users/${selectedFriend}/callStates/${currentUser}`] = {status: 'active', mic: true, screen: false};
-                update(ref(db), updates);
-                await startLocalCall();
-                refreshChat();
-            }
-        };
-
-        window.rejectCall = () => {
-            if (selectedFriend) {
-                const updates = {};
-                updates[`users/${selectedFriend}/callStates/${currentUser}`] = {status: 'ended', mic: false, screen: false};
-                update(ref(db), updates);
-                refreshChat();
-            }
-        };
-
-        window.endCall = () => endCall();
-
-        async function startLocalCall() {
-            try {
-                callStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                localVideo = document.createElement('video');
-                localVideo.srcObject = callStream;
-                localVideo.autoplay = true;
-                localVideo.muted = true;
-                localVideo.className = 'local-video';
-                document.body.appendChild(localVideo);
-
-                peerConnection = new RTCPeerConnection({
-                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-                });
-
-                callStream.getTracks().forEach(track => peerConnection.addTrack(track, callStream));
-
-                peerConnection.onicecandidate = (event) => {
-                    if (event.candidate) console.log('> ICE candidate');
-                };
-
-                peerConnection.ontrack = (event) => {
-                    console.log('> Remote stream');
-                };
-
-                dataChannel = peerConnection.createDataChannel('control');
-                dataChannel.onopen = () => console.log('> Data channel open');
-                dataChannel.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-                    console.log(`> Remote ${data.type} ${data.enabled ? 'on' : 'off'}`);
-                };
-
-                console.log('> Call started');
-            } catch (err) {
-                alert('> Mic denied');
-            }
-        }
-
-        function toggleMic() {
-            if (selectedFriend && callStream) {
-                const newMic = !userData.callStates[selectedFriend].mic;
-                const updates = {};
-                updates[`users/${currentUser}/callStates/${selectedFriend}/mic`] = newMic;
-                updates[`users/${selectedFriend}/callStates/${currentUser}/mic`] = newMic;
-                update(ref(db), updates);
-
-                const audioTrack = callStream.getAudioTracks()[0];
-                if (audioTrack) audioTrack.enabled = newMic;
-
-                if (dataChannel && dataChannel.readyState === 'open') {
-                    dataChannel.send(JSON.stringify({ type: 'mic', enabled: newMic }));
-                }
-
-                refreshChat();
-            }
-        }
-
-        async function toggleScreen() {
-            if (selectedFriend) {
-                const newScreen = !userData.callStates[selectedFriend].screen;
-                if (newScreen) {
-                    try {
-                        screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-                        screenVideo = document.createElement('video');
-                        screenVideo.srcObject = screenStream;
-                        screenVideo.autoplay = true;
-                        screenVideo.muted = true;
-                        screenVideo.className = 'screen-video';
-
-                        if (peerConnection) {
-                            screenStream.getTracks().forEach(track => peerConnection.addTrack(track, screenStream));
-                        }
-
-                        const updates = {};
-                        updates[`users/${currentUser}/callStates/${selectedFriend}/screen`] = true;
-                        updates[`users/${selectedFriend}/callStates/${currentUser}/screen`] = true;
-                        update(ref(db), updates);
-
-                        if (dataChannel && dataChannel.readyState === 'open') {
-                            dataChannel.send(JSON.stringify({ type: 'screen', enabled: true }));
-                        }
-
-                        refreshChat();
-                    } catch (err) {
-                        alert('> Screen denied');
-                    }
-                } else {
-                    stopLocalStreams();
-                    const updates = {};
-                    updates[`users/${currentUser}/callStates/${selectedFriend}/screen`] = false;
-                    updates[`users/${selectedFriend}/callStates/${currentUser}/screen`] = false;
-                    update(ref(db), updates);
-
-                    if (dataChannel && dataChannel.readyState === 'open') {
-                        dataChannel.send(JSON.stringify({ type: 'screen', enabled: false }));
-                    }
-                    refreshChat();
-                }
-            }
-        }
-
-        // Init
-        if (!currentUser) {
-            showLogin();
-        } else {
-            get(ref(db, `users/${currentUser}`)).then(snapshot => {
-                if (!snapshot.exists()) {
-                    localStorage.removeItem('currentUser');
-                    showLogin();
-                } else {
-                    initApp();
-                }
-            });
-        }
-    </script>
-</body>
-</html>
+> ${p} <button class="button accept" data-user="${p}">accept</button>
