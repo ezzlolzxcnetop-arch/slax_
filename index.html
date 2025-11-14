@@ -5,12 +5,13 @@
     <title>Slax_</title>
     <script type="module">
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js';
-        import { getDatabase, ref, onValue, set, update, push } from 'https://www.gstatic.com/firebasejs/10.13.1/firebase-database.js';
+        import { getDatabase, ref, onValue, set, update, push, get } from 'https://www.gstatic.com/firebasejs/10.13.1/firebase-database.js';
 
-        // Your Firebase config
+        // Your Firebase config (added databaseURL to fix the error)
         const firebaseConfig = {
             apiKey: "AIzaSyAHkdr6tAaUplSieZuK8r7bVu62tJPLjII",
             authDomain: "slax-chat.firebaseapp.com",
+            databaseURL: "https://slax-chat-default-rtdb.firebaseio.com/",  // Added this line
             projectId: "slax-chat",
             storageBucket: "slax-chat.firebasestorage.app",
             messagingSenderId: "1045228942622",
@@ -166,6 +167,7 @@
         let dataChannel = null;
         let userData = {}; // Local cache
         let selectedFriend = null;
+        let unsubscribeUser = null; // For cleaning up listeners
 
         // Inactivity check (local)
         const lastVisitKey = 'slax_lastVisit';
@@ -178,13 +180,8 @@
         }
         localStorage.setItem(lastVisitKey, now.toString());
 
-        function saveUserData(userId, data) {
-            const updates = {};
-            updates[`users/${userId}`] = data;
-            update(ref(db), updates);
-        }
-
         function showLogin() {
+            console.log('> Showing login screen');
             document.getElementById('chat').innerHTML = `
 > Login to Slax_
 <input id="username" class="auth-input" placeholder="> username">
@@ -201,16 +198,17 @@
                 if (!user || !pass) return alert('> Enter username and password');
                 const userRef = ref(db, `users/${user}`);
                 const snapshot = await get(userRef);
-                const userData = snapshot.val();
+                const userSnapData = snapshot.val();
                 if (authMode === 'login') {
-                    if (!userData || userData.password !== pass) return alert('> Invalid credentials');
+                    if (!userSnapData || userSnapData.password !== pass) return alert('> Invalid credentials');
                     localStorage.setItem('currentUser', user);
                     currentUser = user;
                     localStorage.setItem(lastVisitKey, now.toString());
+                    console.log(`> Login successful for ${user}`);
                     initApp();
                 } else {
-                    if (userData) return alert('> User exists');
-                    set(userRef, {
+                    if (userSnapData) return alert('> User exists');
+                    await set(userRef, {
                         password: pass,
                         friends: [],
                         pendingRequests: [],
@@ -220,6 +218,7 @@
                     localStorage.setItem('currentUser', user);
                     currentUser = user;
                     localStorage.setItem(lastVisitKey, now.toString());
+                    console.log(`> Registration successful for ${user}`);
                     initApp();
                 }
             };
@@ -233,16 +232,18 @@
         }
 
         function initApp() {
+            console.log(`> Initializing app for ${currentUser}`);
             document.getElementById('sidebar').style.display = 'block';
             document.getElementById('input-area').style.display = 'flex';
             document.getElementById('my-id').innerText = `> ID: ${currentUser}`;
             document.getElementById('logout').onclick = () => {
+                if (unsubscribeUser) unsubscribeUser();
                 localStorage.removeItem('currentUser');
                 location.reload();
             };
 
             const userRef = ref(db, `users/${currentUser}`);
-            onValue(userRef, (snapshot) => {
+            unsubscribeUser = onValue(userRef, (snapshot) => {
                 userData = snapshot.val() || {};
                 refreshAll();
             });
@@ -374,7 +375,7 @@
                     const searchUser = e.target.value.trim();
                     get(ref(db, 'users')).then(snapshot => {
                         const allUsers = snapshot.val();
-                        if (searchUser && searchUser !== currentUser && allUsers[searchUser]) {
+                        if (searchUser && searchUser !== currentUser && allUsers && allUsers[searchUser]) {
                             get(ref(db, `users/${currentUser}/friends`)).then(fSnap => {
                                 const friends = fSnap.val() || [];
                                 if (!friends.includes(searchUser)) {
@@ -412,13 +413,13 @@
                 time: new Date().toISOString()
             };
             const updates = {};
-            if (!userData.messages[selectedFriend]) userData.messages[selectedFriend] = [];
-            userData.messages[selectedFriend].push(messageObj);
-            updates[`users/${currentUser}/messages/${selectedFriend}`] = userData.messages[selectedFriend];
+            let myMsgs = userData.messages[selectedFriend] || [];
+            myMsgs.push(messageObj);
+            updates[`users/${currentUser}/messages/${selectedFriend}`] = myMsgs;
 
-            if (!userData.messages[currentUser]) userData.messages[currentUser] = [];
-            userData.messages[currentUser].push(messageObj);
-            updates[`users/${selectedFriend}/messages/${currentUser}`] = userData.messages[currentUser];
+            let friendMsgs = userData.messages[currentUser] || [];
+            friendMsgs.push(messageObj);
+            updates[`users/${selectedFriend}/messages/${currentUser}`] = friendMsgs;
 
             update(ref(db), updates);
             refreshChat();
@@ -460,8 +461,9 @@
                         const updates = {};
                         const myFriends = [...(userData.friends || []), u];
                         updates[`users/${currentUser}/friends`] = myFriends;
-                        const friendData = await get(ref(db, `users/${u}`));
-                        const friendFriends = [...(friendData.val().friends || []), currentUser];
+                        const friendSnap = await get(ref(db, `users/${u}`));
+                        const friendData = friendSnap.val();
+                        const friendFriends = [...(friendData.friends || []), currentUser];
                         updates[`users/${u}/friends`] = friendFriends;
                         const myPending = (userData.pendingRequests || []).filter(x => x !== u);
                         updates[`users/${currentUser}/pendingRequests`] = myPending;
@@ -496,8 +498,7 @@
                 }).join('<br>');
 
             const callState = userData.callStates[selectedFriend] || {status: 'none'};
-            const friendCallRef = ref(db, `users/${selectedFriend}/callStates/${currentUser}`);
-            get(friendCallRef).then(snapshot => {
+            get(ref(db, `users/${selectedFriend}/callStates/${currentUser}`)).then(snapshot => {
                 const friendCallState = snapshot.val() || {status: 'none'};
 
                 if (callState.status === 'calling') {
@@ -513,8 +514,10 @@
 > <button class="button" onclick="endCall()">End Call</button>
 </div>`;
                     setTimeout(() => {
-                        document.getElementById('mic-toggle-btn').onclick = toggleMic;
-                        document.getElementById('screen-toggle-btn').onclick = toggleScreen;
+                        const micBtn = document.getElementById('mic-toggle-btn');
+                        if (micBtn) micBtn.onclick = toggleMic;
+                        const screenBtn = document.getElementById('screen-toggle-btn');
+                        if (screenBtn) screenBtn.onclick = toggleScreen;
                     }, 0);
                     document.getElementById('call-btn').textContent = 'end';
                 } else {
@@ -530,7 +533,7 @@
             });
         }
 
-        // Call functions (simplified for Firebase)
+        // Call functions
         window.acceptCall = async () => {
             if (selectedFriend) {
                 const updates = {};
