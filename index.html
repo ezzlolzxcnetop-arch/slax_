@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>console slax_</title>
+    <title>slax_</title>
     <style>
         body {
             background-color: #222;
@@ -71,6 +71,22 @@
             display: inline-block;
             margin-left: 10px;
         }
+        .call-controls {
+            display: flex;
+            gap: 5px;
+            margin-top: 10px;
+        }
+        .call-notification {
+            background: #333;
+            padding: 10px;
+            border: 1px solid #f00;
+            margin: 5px 0;
+        }
+        .screen-video {
+            width: 100%;
+            max-width: 300px;
+            margin: 5px 0;
+        }
         .auth-input {
             background: transparent;
             color: #0f0;
@@ -105,6 +121,7 @@
     <div id="input-area">
         <input id="message-input" placeholder="> type message...">
         <button id="record-btn" class="button">mic</button>
+        <button id="call-btn" class="button" style="display: none;">call</button>
         <span id="record-status"></span>
     </div>
 
@@ -116,6 +133,9 @@
         let mediaRecorder = null;
         let audioChunks = [];
         let isRecording = false;
+        let callStream = null;
+        let screenStream = null;
+        let screenVideo = null;
 
         // Check inactivity
         let lastVisit = parseInt(localStorage.getItem(lastVisitKey)) || 0;
@@ -150,7 +170,7 @@
                     if (!users[user] || users[user].password !== pass) return alert('> Invalid credentials');
                     localStorage.setItem('currentUser', user);
                     currentUser = user;
-                    localStorage.setItem(lastVisitKey, now.toString()); // Update on login
+                    localStorage.setItem(lastVisitKey, now.toString());
                     initApp();
                 } else {
                     if (users[user]) return alert('> User exists');
@@ -158,12 +178,13 @@
                         password: pass,
                         friends: [],
                         pendingRequests: [],
-                        messages: {}
+                        messages: {},
+                        callStates: {} // {friend: {status: 'none'|'calling'|'active'|'ended', mic: true, screen: false}}
                     };
                     saveUsers();
                     localStorage.setItem('currentUser', user);
                     currentUser = user;
-                    localStorage.setItem(lastVisitKey, now.toString()); // Update on register
+                    localStorage.setItem(lastVisitKey, now.toString());
                     initApp();
                 }
             };
@@ -186,6 +207,11 @@
                 localStorage.removeItem('currentUser');
                 location.reload();
             };
+
+            // Ensure callStates
+            if (!users[currentUser].callStates) {
+                users[currentUser].callStates = {};
+            }
 
             refreshFriends();
 
@@ -254,6 +280,38 @@
                 }
             }
 
+            // Call button
+            const callBtn = document.getElementById('call-btn');
+            callBtn.onclick = () => {
+                if (!selectedFriend) return alert('> Select a friend first');
+                if (!users[currentUser].callStates[selectedFriend]) {
+                    users[currentUser].callStates[selectedFriend] = {status: 'calling', mic: true, screen: false};
+                    users[selectedFriend].callStates[currentUser] = {status: 'incoming', mic: false, screen: false};
+                    saveUsers();
+                    alert(`> Calling ${selectedFriend}...`);
+                } else if (users[currentUser].callStates[selectedFriend].status === 'active') {
+                    // End call
+                    endCall();
+                }
+            };
+
+            function endCall() {
+                if (selectedFriend) {
+                    users[currentUser].callStates[selectedFriend] = {status: 'ended', mic: true, screen: false};
+                    users[selectedFriend].callStates[currentUser] = {status: 'ended', mic: false, screen: false};
+                    saveUsers();
+                    if (screenVideo) {
+                        screenVideo.remove();
+                        screenVideo = null;
+                    }
+                    if (screenStream) {
+                        screenStream.getTracks().forEach(track => track.stop());
+                        screenStream = null;
+                    }
+                    callBtn.textContent = 'call';
+                }
+            }
+
             // Search friends
             document.getElementById('search').addEventListener('keypress', (e) => {
                 if (e.key === 'Enter') {
@@ -274,7 +332,7 @@
                 }
             });
 
-            setInterval(refreshAll, 2000);
+            setInterval(refreshAll, 1000); // Faster polling for calls
         }
 
         function sendMessage(content, type) {
@@ -317,6 +375,7 @@
                 document.querySelectorAll('.friend').forEach(el => {
                     el.onclick = () => {
                         selectedFriend = el.dataset.user;
+                        document.getElementById('call-btn').style.display = 'block';
                         refreshChat();
                         document.getElementById('message-input').focus();
                     };
@@ -359,15 +418,126 @@
             }
             const chat = document.getElementById('chat');
             const msgs = users[currentUser]?.messages[selectedFriend] || [];
-            chat.innerHTML = `> Chat with ${selectedFriend}<br>` + 
+            let html = `> Chat with ${selectedFriend}<br>` + 
                 msgs.map(m => {
                     if (m.type === 'text') {
                         return `> ${m.from}: ${m.content}`;
-                    } else {
+                    } else if (m.type === 'voice') {
                         return `> ${m.from}: [VOICE] <audio controls class="audio-player" src="${m.content}"></audio>`;
                     }
+                    return '';
                 }).join('<br>');
+
+            // Call state
+            const callState = users[currentUser]?.callStates[selectedFriend] || {status: 'none'};
+            const friendCallState = users[selectedFriend]?.callStates[currentUser] || {status: 'none'};
+
+            if (callState.status === 'calling') {
+                html += `<div class="call-notification">> Calling ${selectedFriend}... <button class="button" onclick="endCall()">End</button></div>`;
+                document.getElementById('call-btn').textContent = 'end';
+            } else if (friendCallState.status === 'incoming') {
+                html += `<div class="call-notification">> Incoming call from ${currentUser}! <button class="button" onclick="acceptCall()">Accept</button> <button class="button" onclick="rejectCall()">Reject</button></div>`;
+            } else if (callState.status === 'active') {
+                html += `<div class="call-notification">> Call active with ${selectedFriend}</div>`;
+                html += `<div class="call-controls">
+> Mic: <button class="button" id="mic-toggle-btn">${callState.mic ? 'mute' : 'unmute'}</button>
+> Screen: <button class="button" id="screen-toggle-btn">${callState.screen ? 'stop share' : 'share'}</button>
+> <button class="button" onclick="endCall()">End Call</button>
+</div>`;
+                // Add event listeners for toggles (re-attach on refresh)
+                setTimeout(() => {
+                    document.getElementById('mic-toggle-btn')?.onclick = toggleMic;
+                    document.getElementById('screen-toggle-btn')?.onclick = toggleScreen;
+                }, 0);
+                document.getElementById('call-btn').textContent = 'end';
+            } else {
+                document.getElementById('call-btn').textContent = 'call';
+            }
+
+            // Screen video if sharing
+            if (callState.screen && screenVideo) {
+                html += '<video class="screen-video" autoplay muted></video>'; // Placeholder, actual attach in toggle
+            }
+
+            chat.innerHTML = html;
             chat.scrollTop = chat.scrollHeight;
+        }
+
+        // Call functions
+        window.acceptCall = function() {
+            if (selectedFriend) {
+                users[currentUser].callStates[selectedFriend] = {status: 'active', mic: true, screen: false};
+                users[selectedFriend].callStates[currentUser] = {status: 'active', mic: true, screen: false};
+                saveUsers();
+                // Start local audio (simulation)
+                startLocalCallAudio();
+            }
+        };
+
+        window.rejectCall = function() {
+            if (selectedFriend) {
+                users[selectedFriend].callStates[currentUser] = {status: 'ended', mic: false, screen: false};
+                saveUsers();
+            }
+        };
+
+        window.endCall = function() {
+            endCall();
+        };
+
+        function toggleMic() {
+            if (selectedFriend) {
+                const newMic = !users[currentUser].callStates[selectedFriend].mic;
+                users[currentUser].callStates[selectedFriend].mic = newMic;
+                users[selectedFriend].callStates[currentUser].mic = newMic; // Sync
+                saveUsers();
+                refreshChat();
+            }
+        }
+
+        async function toggleScreen() {
+            if (selectedFriend) {
+                const newScreen = !users[currentUser].callStates[selectedFriend].screen;
+                if (newScreen) {
+                    try {
+                        screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                        screenVideo = document.createElement('video');
+                        screenVideo.srcObject = screenStream;
+                        screenVideo.autoplay = true;
+                        screenVideo.muted = true;
+                        screenVideo.className = 'screen-video';
+                        document.getElementById('chat').appendChild(screenVideo);
+                        users[currentUser].callStates[selectedFriend].screen = true;
+                        users[selectedFriend].callStates[currentUser].screen = true; // Sync
+                        saveUsers();
+                    } catch (err) {
+                        alert('> Screen share denied');
+                    }
+                } else {
+                    if (screenStream) {
+                        screenStream.getTracks().forEach(track => track.stop());
+                    }
+                    if (screenVideo) {
+                        screenVideo.remove();
+                    }
+                    screenStream = null;
+                    screenVideo = null;
+                    users[currentUser].callStates[selectedFriend].screen = false;
+                    users[selectedFriend].callStates[currentUser].screen = false;
+                    saveUsers();
+                }
+                refreshChat();
+            }
+        }
+
+        async function startLocalCallAudio() {
+            try {
+                callStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                // Here you could add to a peer connection, but for simulation, just log
+                console.log('> Local audio stream started (simulation)');
+            } catch (err) {
+                alert('> Microphone access denied for call');
+            }
         }
 
         // Init
