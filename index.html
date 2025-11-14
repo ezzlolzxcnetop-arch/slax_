@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>slax_</title>
+    <title>Slax_</title>
     <style>
         body {
             background-color: #222;
@@ -87,6 +87,14 @@
             max-width: 300px;
             margin: 5px 0;
         }
+        .local-video {
+            width: 100px;
+            height: 75px;
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 20;
+        }
         .auth-input {
             background: transparent;
             color: #0f0;
@@ -127,8 +135,8 @@
 
     <script>
         let currentUser = localStorage.getItem('currentUser');
-        const usersKey = 'console_discord_users';
-        const lastVisitKey = 'console_discord_lastVisit';
+        const usersKey = 'slax_users';
+        const lastVisitKey = 'slax_lastVisit';
         let users = JSON.parse(localStorage.getItem(usersKey)) || {};
         let mediaRecorder = null;
         let audioChunks = [];
@@ -136,12 +144,16 @@
         let callStream = null;
         let screenStream = null;
         let screenVideo = null;
+        let localVideo = null;
+        let peerConnection = null;
+        let dataChannel = null;
 
         // Check inactivity
         let lastVisit = parseInt(localStorage.getItem(lastVisitKey)) || 0;
         const now = Date.now();
         const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
         if (currentUser && now - lastVisit > THREE_DAYS) {
+            console.log('> Сессия сброшена из-за неактивности >3 дней');
             localStorage.removeItem('currentUser');
             currentUser = null;
         }
@@ -152,8 +164,9 @@
         }
 
         function showLogin() {
+            console.log('> Показываем экран авторизации');
             document.getElementById('chat').innerHTML = `
-> Login to Console Discord
+> Login to Slax_
 <input id="username" class="auth-input" placeholder="> username">
 <input id="password" type="password" class="auth-input" placeholder="> password">
 <button id="auth-btn" class="button">login</button>
@@ -171,6 +184,7 @@
                     localStorage.setItem('currentUser', user);
                     currentUser = user;
                     localStorage.setItem(lastVisitKey, now.toString());
+                    console.log(`> Логин успешен для ${user}`);
                     initApp();
                 } else {
                     if (users[user]) return alert('> User exists');
@@ -179,12 +193,13 @@
                         friends: [],
                         pendingRequests: [],
                         messages: {},
-                        callStates: {} // {friend: {status: 'none'|'calling'|'active'|'ended', mic: true, screen: false}}
+                        callStates: {}
                     };
                     saveUsers();
                     localStorage.setItem('currentUser', user);
                     currentUser = user;
                     localStorage.setItem(lastVisitKey, now.toString());
+                    console.log(`> Регистрация успешен для ${user}`);
                     initApp();
                 }
             };
@@ -200,10 +215,12 @@
         let selectedFriend = null;
 
         function initApp() {
+            console.log(`> Инициализация app для ${currentUser}`);
             document.getElementById('sidebar').style.display = 'block';
             document.getElementById('input-area').style.display = 'flex';
             document.getElementById('my-id').innerText = `> ID: ${currentUser}`;
             document.getElementById('logout').onclick = () => {
+                console.log('> Логаут');
                 localStorage.removeItem('currentUser');
                 location.reload();
             };
@@ -300,15 +317,35 @@
                     users[currentUser].callStates[selectedFriend] = {status: 'ended', mic: true, screen: false};
                     users[selectedFriend].callStates[currentUser] = {status: 'ended', mic: false, screen: false};
                     saveUsers();
-                    if (screenVideo) {
-                        screenVideo.remove();
-                        screenVideo = null;
+                    stopLocalStreams();
+                    if (peerConnection) {
+                        peerConnection.close();
+                        peerConnection = null;
                     }
-                    if (screenStream) {
-                        screenStream.getTracks().forEach(track => track.stop());
-                        screenStream = null;
+                    if (dataChannel) {
+                        dataChannel.close();
+                        dataChannel = null;
                     }
                     callBtn.textContent = 'call';
+                    if (localVideo) {
+                        localVideo.remove();
+                        localVideo = null;
+                    }
+                }
+            }
+
+            function stopLocalStreams() {
+                if (callStream) {
+                    callStream.getTracks().forEach(track => track.stop());
+                    callStream = null;
+                }
+                if (screenStream) {
+                    screenStream.getTracks().forEach(track => track.stop());
+                    screenStream = null;
+                }
+                if (screenVideo) {
+                    screenVideo.remove();
+                    screenVideo = null;
                 }
             }
 
@@ -436,18 +473,20 @@
                 html += `<div class="call-notification">> Calling ${selectedFriend}... <button class="button" onclick="endCall()">End</button></div>`;
                 document.getElementById('call-btn').textContent = 'end';
             } else if (friendCallState.status === 'incoming') {
-                html += `<div class="call-notification">> Incoming call from ${currentUser}! <button class="button" onclick="acceptCall()">Accept</button> <button class="button" onclick="rejectCall()">Reject</button></div>`;
+                html += `<div class="call-notification">> Incoming call from ${selectedFriend}! <button class="button" onclick="acceptCall()">Accept</button> <button class="button" onclick="rejectCall()">Reject</button></div>`;
             } else if (callState.status === 'active') {
                 html += `<div class="call-notification">> Call active with ${selectedFriend}</div>`;
                 html += `<div class="call-controls">
-> Mic: <button class="button" id="mic-toggle-btn">${callState.mic ? 'mute' : 'unmute'}</button>
-> Screen: <button class="button" id="screen-toggle-btn">${callState.screen ? 'stop share' : 'share'}</button>
+> Mic: <button class="button" id="mic-toggle-btn" style="color: ${callState.mic ? '#0f0' : '#f00'}">${callState.mic ? 'mute' : 'unmute'}</button>
+> Screen: <button class="button" id="screen-toggle-btn" style="color: ${callState.screen ? '#0f0' : '#f00'}">${callState.screen ? 'stop share' : 'share'}</button>
 > <button class="button" onclick="endCall()">End Call</button>
 </div>`;
                 // Add event listeners for toggles (re-attach on refresh)
                 setTimeout(() => {
-                    document.getElementById('mic-toggle-btn')?.onclick = toggleMic;
-                    document.getElementById('screen-toggle-btn')?.onclick = toggleScreen;
+                    const micBtn = document.getElementById('mic-toggle-btn');
+                    if (micBtn) micBtn.onclick = toggleMic;
+                    const screenBtn = document.getElementById('screen-toggle-btn');
+                    if (screenBtn) screenBtn.onclick = toggleScreen;
                 }, 0);
                 document.getElementById('call-btn').textContent = 'end';
             } else {
@@ -456,7 +495,7 @@
 
             // Screen video if sharing
             if (callState.screen && screenVideo) {
-                html += '<video class="screen-video" autoplay muted></video>'; // Placeholder, actual attach in toggle
+                html += screenVideo.outerHTML;
             }
 
             chat.innerHTML = html;
@@ -464,13 +503,12 @@
         }
 
         // Call functions
-        window.acceptCall = function() {
+        window.acceptCall = async function() {
             if (selectedFriend) {
                 users[currentUser].callStates[selectedFriend] = {status: 'active', mic: true, screen: false};
                 users[selectedFriend].callStates[currentUser] = {status: 'active', mic: true, screen: false};
                 saveUsers();
-                // Start local audio (simulation)
-                startLocalCallAudio();
+                await startLocalCall();
             }
         };
 
@@ -485,12 +523,76 @@
             endCall();
         };
 
+        async function startLocalCall() {
+            try {
+                callStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                // Local video preview (optional, for mic activity visualization)
+                localVideo = document.createElement('video');
+                localVideo.srcObject = callStream;
+                localVideo.autoplay = true;
+                localVideo.muted = true;
+                localVideo.className = 'local-video';
+                document.body.appendChild(localVideo);
+
+                // Simulate peer connection (in real app, use STUN/TURN and signaling)
+                peerConnection = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                // Add local stream to peer
+                callStream.getTracks().forEach(track => peerConnection.addTrack(track, callStream));
+
+                // Handle ICE candidates (in real, send via signaling)
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        console.log('> ICE candidate generated (send to peer via signaling)');
+                    }
+                };
+
+                // Handle remote stream (in real, play incoming audio/video)
+                peerConnection.ontrack = (event) => {
+                    console.log('> Remote stream received (play audio)');
+                    // Simulate playing remote audio
+                };
+
+                // Create data channel for signaling mic/screen state
+                dataChannel = peerConnection.createDataChannel('control');
+                dataChannel.onopen = () => console.log('> Data channel open for controls');
+                dataChannel.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'mic') {
+                        // Handle remote mic state change
+                        console.log(`> Remote mic ${data.enabled ? 'enabled' : 'muted'}`);
+                    } else if (data.type === 'screen') {
+                        // Handle remote screen share
+                        console.log(`> Remote screen ${data.enabled ? 'shared' : 'stopped'}`);
+                    }
+                };
+
+                console.log('> Local call started with WebRTC peer connection');
+            } catch (err) {
+                alert('> Microphone access denied for call');
+            }
+        }
+
         function toggleMic() {
-            if (selectedFriend) {
+            if (selectedFriend && callStream) {
                 const newMic = !users[currentUser].callStates[selectedFriend].mic;
                 users[currentUser].callStates[selectedFriend].mic = newMic;
-                users[selectedFriend].callStates[currentUser].mic = newMic; // Sync
+                users[selectedFriend].callStates[currentUser].mic = newMic; // Sync state
                 saveUsers();
+
+                // Real mute/unmute
+                const audioTrack = callStream.getAudioTracks()[0];
+                if (audioTrack) {
+                    audioTrack.enabled = newMic;
+                }
+
+                // Send via data channel (in real signaling)
+                if (dataChannel && dataChannel.readyState === 'open') {
+                    dataChannel.send(JSON.stringify({ type: 'mic', enabled: newMic }));
+                }
+
                 refreshChat();
             }
         }
@@ -507,44 +609,45 @@
                         screenVideo.muted = true;
                         screenVideo.className = 'screen-video';
                         document.getElementById('chat').appendChild(screenVideo);
+
+                        // Add to peer connection
+                        if (peerConnection) {
+                            screenStream.getTracks().forEach(track => peerConnection.addTrack(track, screenStream));
+                        }
+
                         users[currentUser].callStates[selectedFriend].screen = true;
                         users[selectedFriend].callStates[currentUser].screen = true; // Sync
                         saveUsers();
+
+                        // Send via data channel
+                        if (dataChannel && dataChannel.readyState === 'open') {
+                            dataChannel.send(JSON.stringify({ type: 'screen', enabled: true }));
+                        }
                     } catch (err) {
                         alert('> Screen share denied');
                     }
                 } else {
-                    if (screenStream) {
-                        screenStream.getTracks().forEach(track => track.stop());
-                    }
-                    if (screenVideo) {
-                        screenVideo.remove();
-                    }
-                    screenStream = null;
-                    screenVideo = null;
+                    stopLocalStreams();
                     users[currentUser].callStates[selectedFriend].screen = false;
                     users[selectedFriend].callStates[currentUser].screen = false;
                     saveUsers();
+
+                    // Send via data channel
+                    if (dataChannel && dataChannel.readyState === 'open') {
+                        dataChannel.send(JSON.stringify({ type: 'screen', enabled: false }));
+                    }
                 }
                 refreshChat();
             }
         }
 
-        async function startLocalCallAudio() {
-            try {
-                callStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                // Here you could add to a peer connection, but for simulation, just log
-                console.log('> Local audio stream started (simulation)');
-            } catch (err) {
-                alert('> Microphone access denied for call');
-            }
-        }
-
         // Init
+        console.log(`> Проверка сессии: currentUser = ${currentUser}, lastVisit = ${lastVisit}`);
         if (!currentUser) {
             showLogin();
         } else {
             if (!users[currentUser]) {
+                console.log('> Аккаунт не найден, сбрасываем сессию');
                 localStorage.removeItem('currentUser');
                 showLogin();
             } else {
