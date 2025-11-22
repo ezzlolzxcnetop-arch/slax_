@@ -115,12 +115,12 @@
         setLogLevel('Debug'); 
         
         // =========================================================================================
-        // --- !!! ОБЯЗАТЕЛЬНО ЗАМЕНИТЕ ЭТИ ЗНАЧЕНИЯ НА СВОЮ КОНФИГУРАЦИЮ FIRESTORE !!! ---
+        // --- КОНФИГУРАЦИЯ FIRESTORE (ВАШИ КЛЮЧИ) ---
         // =========================================================================================
         const USER_FIREBASE_CONFIG = {
-            apiKey: "AIzaSyDrib0Q4O1QJsYAFkSkIJCT1yX17NeTtFE", // <-- ВСТАВЬТЕ ВАШ API КЛЮЧ
-            authDomain: "fir-l-f10e8.firebaseapp.com", // <-- ВСТАВЬТЕ ВАШ АДРЕС (Например, 'my-chat-app-123.firebaseapp.com')
-            projectId: "fir-l-f10e8", // <-- ВСТАВЬТЕ ID ВАШЕГО ПРОЕКТА
+            apiKey: "AIzaSyDrib0Q4O1QJsYAFkSkIJCT1yX17NeTtFE", 
+            authDomain: "fir-l-f10e8.firebaseapp.com", 
+            projectId: "fir-l-f10e8", 
             storageBucket: "fir-l-f10e8.firebasestorage.app",
             messagingSenderId: "382881410062",
             appId: "1:382881410062:web:ba5d005920e57f6b30a05f"
@@ -139,7 +139,10 @@
         
         // Определяем переменные, используя данные Canvas (если есть) или Fallback (ваши ключи)
         const appId = typeof __app_id !== 'undefined' ? __app_id : EXTERNAL_APP_ID;
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : USER_FIREBASE_CONFIG;
+        
+        // !!! ИСПРАВЛЕНИЕ: Переименовано, чтобы избежать конфликта 'firebaseConfig has already been declared'
+        const configData = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : USER_FIREBASE_CONFIG;
+        
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         // Элементы DOM
@@ -149,11 +152,8 @@
         const userIdDisplay = document.getElementById('user-id-display');
         const friendIdInput = document.getElementById('friend-id-input');
         const addFriendBtn = document.getElementById('add-friend-btn');
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : USER_FIREBASE_CONFIG;
         const friendStatusMessage = document.getElementById('friend-status-message');
         const friendList = document.getElementById('friend-list');
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : USER_FIREBASE_CONFIG;
-            (Я оставил `JSON.parse(__firebase_config)` на случай, если он в Canvas передается строкой, но гарантировал, что fallback - это чистый объект);
         const messagesContainer = document.getElementById('messages');
         const chatHeader = document.getElementById('chat-header');
         const currentChatName = document.getElementById('current-chat-name');
@@ -197,7 +197,7 @@
 
         async function initializeFirebase() {
             // Проверка, что пользователь вставил свои настройки
-            if (!firebaseConfig || firebaseConfig.apiKey === "YOUR_API_KEY") {
+            if (!configData || configData.apiKey === "YOUR_API_KEY") {
                 console.error("Firebase config is missing!");
                 loadingMessage.textContent = 'Ошибка: Необходимо вставить свой ключ API Firebase в код!';
                 loadingOverlay.classList.remove('hidden');
@@ -206,7 +206,7 @@
 
             try {
                 // Инициализация
-                app = initializeApp(firebaseConfig);
+                app = initializeApp(configData);
                 db = getFirestore(app);
                 auth = getAuth(app);
 
@@ -243,7 +243,11 @@
             } catch (error) {
                 console.error("Ошибка при инициализации или аутентификации Firebase:", error);
                 // Более информативное сообщение об ошибке на экране:
-                loadingMessage.textContent = `Ошибка Firebase: ${error.message}. Проверьте консоль.`;
+                if (error.code === 'auth/configuration-not-found') {
+                     loadingMessage.textContent = `Ошибка Firebase: ${error.message}. Проверьте правильность ключей (apiKey, authDomain, projectId) в USER_FIREBASE_CONFIG.`;
+                } else {
+                    loadingMessage.textContent = `Ошибка Firebase: ${error.message}. Проверьте консоль.`;
+                }
                 loadingOverlay.classList.remove('hidden');
             }
         }
@@ -261,6 +265,11 @@
                 console.error("Ошибка установки профиля пользователя:", e);
                 // ВАЖНО: Если тут ошибка, это 99% правила безопасности!
                 console.error("ПРОВЕРЬТЕ ПРАВИЛА БЕЗОПАСНОСТИ FIRESTORE: Не удалось установить публичный профиль.");
+                
+                // !!! Дополнительная проверка: Если setUserProfile упала, мы можем застрять.
+                // !!! Показываем ошибку, если запись не удалась.
+                loadingMessage.textContent = `Ошибка: Не удалось создать профиль в Firestore. ПРОВЕРЬТЕ ПРАВИЛА БЕЗОПАСНОСТИ! Ошибка: ${e.message}`;
+                loadingOverlay.classList.remove('hidden');
             }
         }
 
