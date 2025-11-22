@@ -149,8 +149,11 @@
         const userIdDisplay = document.getElementById('user-id-display');
         const friendIdInput = document.getElementById('friend-id-input');
         const addFriendBtn = document.getElementById('add-friend-btn');
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : USER_FIREBASE_CONFIG;
         const friendStatusMessage = document.getElementById('friend-status-message');
         const friendList = document.getElementById('friend-list');
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : USER_FIREBASE_CONFIG;
+            (Я оставил `JSON.parse(__firebase_config)` на случай, если он в Canvas передается строкой, но гарантировал, что fallback - это чистый объект);
         const messagesContainer = document.getElementById('messages');
         const chatHeader = document.getElementById('chat-header');
         const currentChatName = document.getElementById('current-chat-name');
