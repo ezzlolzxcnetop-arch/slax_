@@ -31,7 +31,7 @@
     <div id="loading-overlay" class="fixed inset-0 bg-white/70 backdrop-blur-sm flex items-center justify-center z-50">
         <div class="flex flex-col items-center">
             <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-            <p class="mt-4 text-indigo-600 font-medium">Загрузка Firebase и Аутентификация...</p>
+            <p id="loading-message" class="mt-4 text-indigo-600 font-medium">Загрузка Firebase и Аутентификация...</p>
         </div>
     </div>
 
@@ -106,25 +106,46 @@
             addDoc, 
             serverTimestamp,
             limit,
-            orderBy 
+            // orderBy // Убран, так как требует создания индекса
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Установим уровень логирования для отладки
         setLogLevel('Debug'); 
         
-        // --- Глобальные переменные из среды Canvas ---
-        // Инициализируем переменные, которые должны быть доступны глобально в этом скрипте.
+        // =========================================================================================
+        // --- !!! ОБЯЗАТЕЛЬНО ЗАМЕНИТЕ ЭТИ ЗНАЧЕНИЯ НА СВОЮ КОНФИГУРАЦИЮ FIRESTORE !!! ---
+        // =========================================================================================
+        const USER_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyDrib0Q4O1QJsYAFkSkIJCT1yX17NeTtFE", // <-- ВСТАВЬТЕ ВАШ API КЛЮЧ
+            authDomain: "fir-l-f10e8.firebaseapp.com", // <-- ВСТАВЬТЕ ВАШ АДРЕС (Например, 'my-chat-app-123.firebaseapp.com')
+            projectId: "fir-l-f10e8", // <-- ВСТАВЬТЕ ID ВАШЕГО ПРОЕКТА
+            storageBucket: "fir-l-f10e8.firebasestorage.app",
+            messagingSenderId: "382881410062",
+            appId: "1:382881410062:web:ba5d005920e57f6b30a05f"
+        };
+        // Используйте фиксированный ID приложения для внешнего хостинга, чтобы данные не пересекались
+        const EXTERNAL_APP_ID = "external-chat-app-id-12345"; 
+        // =========================================================================================
+
+        // --- Глобальные переменные из среды Canvas (с fallback) ---
         let app;
         let db;
         let auth;
         let userId = null;
         let currentFriendId = null;
         let currentChatSnapshotUnsubscribe = null;
+        
+        // Определяем переменные, используя данные Canvas (если есть) или Fallback (ваши ключи)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : EXTERNAL_APP_ID;
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : USER_FIREBASE_CONFIG;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         // Элементы DOM
         const appContainer = document.getElementById('app');
         const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingMessage = document.getElementById('loading-message');
         const userIdDisplay = document.getElementById('user-id-display');
         const friendIdInput = document.getElementById('friend-id-input');
         const addFriendBtn = document.getElementById('add-friend-btn');
@@ -138,11 +159,6 @@
         const sendMessageBtn = document.getElementById('send-message-btn');
 
         // --- Вспомогательные функции для Firebase и Путей ---
-
-        // Проверка и инициализация глобальных переменных
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         /**
          * Генерирует уникальный ID чата путем сортировки двух ID пользователей.
@@ -177,9 +193,11 @@
         // --- Инициализация и Аутентификация ---
 
         async function initializeFirebase() {
-            if (!firebaseConfig) {
+            // Проверка, что пользователь вставил свои настройки
+            if (!firebaseConfig || firebaseConfig.apiKey === "YOUR_API_KEY") {
                 console.error("Firebase config is missing!");
-                loadingOverlay.innerHTML = '<p class="text-red-600 font-bold">Ошибка: Настройки Firebase отсутствуют.</p>';
+                loadingMessage.textContent = 'Ошибка: Необходимо вставить свой ключ API Firebase в код!';
+                loadingOverlay.classList.remove('hidden');
                 return;
             }
 
@@ -191,13 +209,14 @@
 
                 // Аутентификация
                 if (initialAuthToken) {
+                    // Используем для среды Canvas
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
+                    // Используем для внешнего развертывания (анонимный вход)
                     await signInAnonymously(auth);
                 }
 
-                // --- Аутентификация и Запуск Приложения (Перемещено) ---
-                // onAuthStateChanged должен вызываться только после инициализации auth
+                // Слушатель состояния аутентификации
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         userId = user.uid;
@@ -217,18 +236,14 @@
                         userIdDisplay.textContent = 'Не аутентифицирован';
                     }
                 });
-                // --------------------------------------------------------
-
+                
             } catch (error) {
                 console.error("Ошибка при инициализации или аутентификации Firebase:", error);
                 // Более информативное сообщение об ошибке на экране:
-                loadingOverlay.innerHTML = `<p class="text-red-600 font-bold">Ошибка Firebase: ${error.message}. Проверьте консоль.</p>`;
+                loadingMessage.textContent = `Ошибка Firebase: ${error.message}. Проверьте консоль.`;
+                loadingOverlay.classList.remove('hidden');
             }
         }
-
-        // --- УДАЛЕННЫЙ БЛОК: Аутентификация и Запуск Приложения ---
-        // Этот блок был удален из глобального кода и перемещен в initializeFirebase, 
-        // чтобы гарантировать, что auth инициализирован.
 
         // 1. Установка публичного профиля пользователя
         async function setUserProfile(uid) {
@@ -319,11 +334,17 @@
 
             // 1. Проверим, существует ли пользователь с таким ID (проверяем публичный профиль)
             const friendUserDocRef = doc(db, getPublicCollectionPath('users'), friendId);
-            // Используем getDocs для проверки, так как getDoc может быть запрещен правилами
-            const friendDocSnapshot = await getDoc(friendUserDocRef);
+            // Используем getDoc для проверки существования документа
+            try {
+                const friendDocSnapshot = await getDoc(friendUserDocRef);
 
-            if (!friendDocSnapshot.exists()) {
-                showMessage(friendStatusMessage, 'Пользователь с таким ID не найден.', 'text-red-500');
+                if (!friendDocSnapshot.exists()) {
+                    showMessage(friendStatusMessage, 'Пользователь с таким ID не найден.', 'text-red-500');
+                    return;
+                }
+            } catch (e) {
+                console.error("Ошибка при проверке профиля друга:", e);
+                showMessage(friendStatusMessage, `Ошибка при проверке ID друга: ${e.message}`, 'text-red-500');
                 return;
             }
             
@@ -397,12 +418,10 @@
 
         function listenToChatMessages(chatId) {
             const messagesPath = getPublicCollectionPath('chats');
-            // Запрос: фильтруем по chatId, сортируем по времени, ограничиваем 50 сообщениями.
+            // Запрос: фильтруем по chatId, ограничиваем 50 сообщениями.
             const q = query(
                 collection(db, messagesPath),
                 where('chatId', '==', chatId),
-                // ВАЖНО: Firestore не поддерживает orderBy() без индекса. Для простоты мы будем сортировать в JS.
-                // orderBy('timestamp', 'asc'), 
                 limit(50) 
             );
 
