@@ -254,7 +254,11 @@
 
         // 1. Установка публичного профиля пользователя
         async function setUserProfile(uid) {
-            const userDocRef = doc(db, getPublicCollectionPath('users'), uid);
+            const userDocPath = getPublicCollectionPath('users');
+            const userDocRef = doc(db, userDocPath, uid);
+
+            console.log(`Попытка создать профиль по пути: ${userDocPath}/${uid}`); // !!! Дополнительное логирование !!!
+
             try {
                 // Устанавливаем базовый профиль, если он не существует
                 await setDoc(userDocRef, { 
