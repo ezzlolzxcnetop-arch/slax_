@@ -1,684 +1,522 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Slax_</title>
-    <script type="module">
-        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js';
-        import { getDatabase, ref, onValue, set, update, push, get, remove } from 'https://www.gstatic.com/firebasejs/10.13.1/firebase-database.js';
-
-        // Your Firebase config (with explicit databaseURL to fix the warning)
-        const firebaseConfig = {
-            apiKey: "AIzaSyAHkdr6tAaUplSieZuK8r7bVu62tJPLjII",
-            authDomain: "slax-chat.firebaseapp.com",
-            databaseURL: "https://slax-chat-default-rtdb.firebaseio.com/",
-            projectId: "slax-chat",
-            storageBucket: "slax-chat.firebasestorage.app",
-            messagingSenderId: "1045228942622",
-            appId: "1:1045228942622:web:2b6e94819ea912edd0c50f"
-        };
-
-        const app = initializeApp(firebaseConfig);
-        const db = getDatabase(app);
-    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Простой Мессенджер (Firebase Firestore)</title>
+    <!-- Загрузка Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Настройка шрифта Inter -->
     <style>
         body {
-            background-color: #222;
-            color: #0f0;
-            font-family: 'Courier New', monospace;
-            margin: 0;
-            padding: 0;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
         }
-        #main {
-            display: flex;
-            height: calc(100% - 60px);
-        }
-        #sidebar {
-            width: 30%;
-            border-right: 1px solid #0f0;
-            padding: 10px;
+        .scrollable {
+            max-height: calc(100vh - 300px); /* Adjust height for mobile/desktop view */
             overflow-y: auto;
         }
-        #search {
-            background: transparent;
-            color: #0f0;
-            border: none;
-            width: 100%;
-            font-size: 16px;
+        /* Стили для скроллбара */
+        .scrollable::-webkit-scrollbar {
+            width: 8px;
         }
-        #chat {
-            width: 70%;
-            padding: 10px;
-            overflow-y: auto;
-        }
-        #input-area {
-            position: fixed;
-            bottom: 0;
-            left: 30%;
-            width: 70%;
-            background: #111;
-            border-top: 1px solid #0f0;
-            padding: 5px;
-            display: flex;
-            align-items: center;
-        }
-        #message-input {
-            background: transparent;
-            color: #0f0;
-            border: none;
-            flex: 1;
-            font-size: 16px;
-            outline: none;
-        }
-        .button {
-            color: #0f0;
-            background: transparent;
-            border: 1px solid #0f0;
-            cursor: pointer;
-            font-family: 'Courier New', monospace;
-            margin: 0 5px;
-            padding: 2px 6px;
-        }
-        .voice-recording {
-            color: #f00;
-        }
-        .audio-player {
-            display: inline-block;
-            margin-left: 10px;
-        }
-        .call-controls {
-            display: flex;
-            gap: 5px;
-            margin-top: 10px;
-        }
-        .call-notification {
-            background: #333;
-            padding: 10px;
-            border: 1px solid #f00;
-            margin: 5px 0;
-        }
-        .screen-video {
-            width: 100%;
-            max-width: 300px;
-            margin: 5px 0;
-        }
-        .local-video {
-            width: 100px;
-            height: 75px;
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            z-index: 20;
-        }
-        .auth-input {
-            background: transparent;
-            color: #0f0;
-            border: none;
-            display: block;
-            margin: 5px 0;
-            width: 100%;
-            font-size: 16px;
+        .scrollable::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 4px;
         }
     </style>
 </head>
-<body>
-    <div id="main">
-        <div id="sidebar">
-            <input id="search" placeholder="> search friends...">
-            <div id="profile">
-                > my profile <button id="logout" class="button">logout</button>
-                <div id="my-id"></div>
-            </div>
-            <div id="pending-requests">
-                > Pending requests:
-                <div id="pending-list"></div>
-            </div>
-            <div id="friends-list">
-                > no friends
-            </div>
+<body class="h-screen flex antialiased text-gray-800">
+
+    <div id="loading-overlay" class="fixed inset-0 bg-white/70 backdrop-blur-sm flex items-center justify-center z-50">
+        <div class="flex flex-col items-center">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+            <p class="mt-4 text-indigo-600 font-medium">Загрузка Firebase и Аутентификация...</p>
         </div>
-        <div id="chat">
-            > select friend start chatting...
-        </div>
-    </div>
-    <div id="input-area">
-        <input id="message-input" placeholder="> type message...">
-        <button id="record-btn" class="button">mic</button>
-        <button id="call-btn" class="button" style="display: none;">call</button>
-        <span id="record-status"></span>
     </div>
 
+    <!-- Основной контейнер мессенджера -->
+    <div id="app" class="flex flex-col md:flex-row w-full h-full hidden bg-white shadow-xl rounded-2xl md:p-4">
+        
+        <!-- Sidebar (Список друзей) -->
+        <div class="w-full md:w-1/3 flex flex-col p-4 bg-gray-50 border-r border-gray-200 rounded-l-2xl">
+            <div class="mb-4 pb-4 border-b border-gray-200">
+                <h2 class="text-xl font-bold text-indigo-700">Мой ID</h2>
+                <div id="user-id-display" class="break-all text-sm bg-indigo-100 p-2 rounded-lg mt-1 font-mono cursor-pointer" title="Нажмите, чтобы скопировать">
+                    Ожидание аутентификации...
+                </div>
+            </div>
+
+            <!-- Добавление друга -->
+            <div class="mb-6">
+                <h3 class="text-lg font-semibold mb-2">Добавить друга</h3>
+                <div class="flex space-x-2">
+                    <input type="text" id="friend-id-input" placeholder="Введите ID друга" class="flex-grow p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-sm">
+                    <button id="add-friend-btn" class="bg-indigo-600 text-white p-2 rounded-lg hover:bg-indigo-700 transition duration-150">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    </button>
+                </div>
+                <p id="friend-status-message" class="text-sm mt-2"></p>
+            </div>
+
+            <!-- Список чатов/друзей -->
+            <h3 class="text-lg font-semibold mb-3 text-indigo-700">Мои Друзья (<span id="friend-count">0</span>)</h3>
+            <div id="friend-list" class="flex-grow scrollable space-y-2">
+                <p class="text-gray-500 text-sm">Друзья будут отображаться здесь.</p>
+            </div>
+        </div>
+
+        <!-- Main Chat Area (Область сообщений) -->
+        <div class="w-full md:w-2/3 flex flex-col bg-white rounded-r-2xl">
+            <div id="chat-header" class="p-4 border-b border-gray-200 bg-white shadow-sm flex-shrink-0">
+                <h2 id="current-chat-name" class="text-xl font-bold text-gray-700">Выберите друга для начала чата</h2>
+            </div>
+            
+            <!-- Сообщения -->
+            <div id="messages" class="flex-grow p-4 space-y-4 overflow-y-auto scrollable">
+                <p class="text-center text-gray-400 mt-20">Начните общение, выбрав друга из списка.</p>
+            </div>
+            
+            <!-- Поле ввода сообщения -->
+            <div id="message-input-container" class="p-4 border-t border-gray-200 bg-gray-50 flex-shrink-0 hidden">
+                <div class="flex space-x-3">
+                    <input type="text" id="message-input" placeholder="Напишите сообщение..." class="flex-grow p-3 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500" disabled>
+                    <button id="send-message-btn" class="bg-indigo-600 text-white p-3 rounded-xl hover:bg-indigo-700 transition duration-150 disabled:bg-indigo-300" disabled>
+                        Отправить
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase Modules -->
     <script type="module">
-        import { getDatabase, ref, onValue, set, update, push, get } from 'https://www.gstatic.com/firebasejs/10.13.1/firebase-database.js';
+        // Импорт необходимых модулей Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            doc, 
+            setDoc, 
+            onSnapshot, 
+            collection, 
+            query, 
+            where, 
+            getDocs, 
+            addDoc, 
+            serverTimestamp,
+            limit,
+            orderBy 
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const db = getDatabase();
-        let currentUser = localStorage.getItem('currentUser');
-        let mediaRecorder = null;
-        let audioChunks = [];
-        let isRecording = false;
-        let callStream = null;
-        let screenStream = null;
-        let screenVideo = null;
-        let localVideo = null;
-        let peerConnection = null;
-        let dataChannel = null;
-        let userData = {}; // Local cache
-        let selectedFriend = null;
-        let unsubscribeUser = null; // For cleaning up listeners
+        // Установим уровень логирования для отладки
+        setLogLevel('Debug'); 
+        
+        // --- Глобальные переменные из среды Canvas ---
+        // Инициализируем переменные, которые должны быть доступны глобально в этом скрипте.
+        let app;
+        let db;
+        let auth;
+        let userId = null;
+        let currentFriendId = null;
+        let currentChatSnapshotUnsubscribe = null;
 
-        // Inactivity check (local)
-        const lastVisitKey = 'slax_lastVisit';
-        let lastVisit = parseInt(localStorage.getItem(lastVisitKey)) || 0;
-        const now = Date.now();
-        const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
-        if (currentUser && now - lastVisit > THREE_DAYS) {
-            localStorage.removeItem('currentUser');
-            currentUser = null;
-        }
-        localStorage.setItem(lastVisitKey, now.toString());
+        // Элементы DOM
+        const appContainer = document.getElementById('app');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const userIdDisplay = document.getElementById('user-id-display');
+        const friendIdInput = document.getElementById('friend-id-input');
+        const addFriendBtn = document.getElementById('add-friend-btn');
+        const friendStatusMessage = document.getElementById('friend-status-message');
+        const friendList = document.getElementById('friend-list');
+        const messagesContainer = document.getElementById('messages');
+        const chatHeader = document.getElementById('chat-header');
+        const currentChatName = document.getElementById('current-chat-name');
+        const messageInputContainer = document.getElementById('message-input-container');
+        const messageInput = document.getElementById('message-input');
+        const sendMessageBtn = document.getElementById('send-message-btn');
 
-        function showLogin() {
-            console.log('> Showing login screen');
-            document.getElementById('chat').innerHTML = `
-> Login to Slax_
-<input id="username" class="auth-input" placeholder="> username">
-<input id="password" type="password" class="auth-input" placeholder="> password">
-<button id="auth-btn" class="button">login</button>
-<div style="margin-top:10px;">
-<button id="toggle-auth" class="button">register</button>
-</div>
-            `;
-            let authMode = 'login';
-            document.getElementById('auth-btn').onclick = async () => {
-                const user = document.getElementById('username').value.trim();
-                const pass = document.getElementById('password').value.trim();
-                if (!user || !pass) return alert('> Enter username and password');
-                const userRef = ref(db, `users/${user}`);
-                const snapshot = await get(userRef);
-                const userSnapData = snapshot.val();
-                if (authMode === 'login') {
-                    if (!userSnapData || userSnapData.password !== pass) return alert('> Invalid credentials');
-                    localStorage.setItem('currentUser', user);
-                    currentUser = user;
-                    localStorage.setItem(lastVisitKey, now.toString());
-                    console.log(`> Login successful for ${user}`);
-                    initApp();
-                } else {
-                    if (userSnapData) return alert('> User exists');
-                    await set(userRef, {
-                        password: pass,
-                        friends: [],
-                        pendingRequests: [],
-                        messages: {},
-                        callStates: {}
-                    });
-                    localStorage.setItem('currentUser', user);
-                    currentUser = user;
-                    localStorage.setItem(lastVisitKey, now.toString());
-                    console.log(`> Registration successful for ${user}`);
-                    initApp();
-                }
-            };
-            document.getElementById('toggle-auth').onclick = () => {
-                authMode = authMode === 'login' ? 'register' : 'login';
-                document.getElementById('auth-btn').textContent = authMode;
-                document.getElementById('toggle-auth').textContent = authMode === 'login' ? 'register' : 'login';
-            };
-            document.getElementById('sidebar').style.display = 'none';
-            document.getElementById('input-area').style.display = 'none';
+        // --- Вспомогательные функции для Firebase и Путей ---
+
+        // Проверка и инициализация глобальных переменных
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        /**
+         * Генерирует уникальный ID чата путем сортировки двух ID пользователей.
+         * Это гарантирует, что чат между A и B будет иметь тот же ID, что и между B и A.
+         * @param {string} id1 Первый ID пользователя.
+         * @param {string} id2 Второй ID пользователя.
+         * @returns {string} Уникальный отсортированный ID чата.
+         */
+        function getChatId(id1, id2) {
+            return [id1, id2].sort().join('_');
         }
 
-        function initApp() {
-            console.log(`> Initializing app for ${currentUser}`);
-            document.getElementById('sidebar').style.display = 'block';
-            document.getElementById('input-area').style.display = 'flex';
-            document.getElementById('my-id').innerText = `> ID: ${currentUser}`;
-            document.getElementById('logout').onclick = () => {
-                // Always show login on logout, regardless of state
-                if (unsubscribeUser) unsubscribeUser();
-                localStorage.removeItem('currentUser');
-                currentUser = null;
-                selectedFriend = null;
-                // Clean up all streams and connections
-                stopLocalStreams();
-                if (peerConnection) peerConnection.close();
-                if (dataChannel) dataChannel.close();
-                // Hide sidebar and input, show login
-                document.getElementById('sidebar').style.display = 'none';
-                document.getElementById('input-area').style.display = 'none';
-                showLogin();
-            };
-
-            const userRef = ref(db, `users/${currentUser}`);
-            unsubscribeUser = onValue(userRef, (snapshot) => {
-                userData = snapshot.val() || {};
-                refreshAll();
-            });
-
-            refreshFriends();
-
-            // Text message
-            document.getElementById('message-input').addEventListener('keypress', (e) => {
-                if (e.key === 'Enter' && selectedFriend) {
-                    const msg = e.target.value.trim();
-                    if (msg) {
-                        sendMessage(msg, 'text');
-                    }
-                    e.target.value = '';
-                }
-            });
-
-            // Voice recording
-            const recordBtn = document.getElementById('record-btn');
-            const recordStatus = document.getElementById('record-status');
-            recordBtn.onclick = async () => {
-                if (!selectedFriend) return alert('> Select a friend first');
-                if (isRecording) {
-                    stopRecording();
-                } else {
-                    startRecording();
-                }
-            };
-
-            async function startRecording() {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    mediaRecorder = new MediaRecorder(stream);
-                    audioChunks = [];
-
-                    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-
-                    mediaRecorder.onstop = () => {
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                        const reader = new FileReader();
-                        reader.readAsDataURL(audioBlob);
-                        reader.onloadend = () => {
-                            const base64data = reader.result;
-                            sendMessage(base64data, 'voice');
-                        };
-                        stream.getTracks().forEach(track => track.stop());
-                    };
-
-                    mediaRecorder.start();
-                    isRecording = true;
-                    recordBtn.classList.add('voice-recording');
-                    recordBtn.textContent = 'stop';
-                    recordStatus.textContent = '> recording...';
-                } catch (err) {
-                    alert('> Microphone access denied or not available');
-                }
-            }
-
-            function stopRecording() {
-                if (mediaRecorder && isRecording) {
-                    mediaRecorder.stop();
-                    isRecording = false;
-                    recordBtn.classList.remove('voice-recording');
-                    recordBtn.textContent = 'mic';
-                    recordStatus.textContent = '';
-                }
-            }
-
-            // Call button
-            const callBtn = document.getElementById('call-btn');
-            callBtn.onclick = async () => {
-                if (!selectedFriend) return alert('> Select a friend first');
-                const myCallStateRef = ref(db, `users/${currentUser}/callStates/${selectedFriend}`);
-                const snapshot = await get(myCallStateRef);
-                const myCallState = snapshot.val() || {status: 'ended'};
-                if (myCallState.status === 'ended') {
-                    const updates = {};
-                    updates[`users/${currentUser}/callStates/${selectedFriend}`] = {status: 'calling', mic: true, screen: false};
-                    updates[`users/${selectedFriend}/callStates/${currentUser}`] = {status: 'incoming', mic: false, screen: false};
-                    update(ref(db), updates);
-                    alert(`> Calling ${selectedFriend}...`);
-                } else if (myCallState.status === 'active') {
-                    endCall();
-                }
-            };
-
-            function endCall() {
-                if (selectedFriend) {
-                    const updates = {};
-                    updates[`users/${currentUser}/callStates/${selectedFriend}`] = {status: 'ended', mic: true, screen: false};
-                    updates[`users/${selectedFriend}/callStates/${currentUser}`] = {status: 'ended', mic: false, screen: false};
-                    update(ref(db), updates);
-                    stopLocalStreams();
-                    if (peerConnection) {
-                        peerConnection.close();
-                        peerConnection = null;
-                    }
-                    if (dataChannel) {
-                        dataChannel.close();
-                        dataChannel = null;
-                    }
-                    callBtn.textContent = 'call';
-                    if (localVideo) {
-                        localVideo.remove();
-                        localVideo = null;
-                    }
-                    refreshChat();
-                }
-            }
-
-            function stopLocalStreams() {
-                if (callStream) {
-                    callStream.getTracks().forEach(track => track.stop());
-                    callStream = null;
-                }
-                if (screenStream) {
-                    screenStream.getTracks().forEach(track => track.stop());
-                    screenStream = null;
-                }
-                if (screenVideo) {
-                    screenVideo.remove();
-                    screenVideo = null;
-                }
-            }
-
-            // Search friends
-            document.getElementById('search').addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    const searchUser = e.target.value.trim();
-                    get(ref(db, 'users')).then(snapshot => {
-                        const allUsers = snapshot.val();
-                        if (searchUser && searchUser !== currentUser && allUsers && allUsers[searchUser]) {
-                            get(ref(db, `users/${currentUser}/friends`)).then(fSnap => {
-                                const friends = fSnap.val() || [];
-                                if (!friends.includes(searchUser)) {
-                                    get(ref(db, `users/${currentUser}/pendingRequests`)).then(pSnap => {
-                                        const pending = pSnap.val() || [];
-                                        if (!pending.includes(searchUser)) {
-                                            const updates = {};
-                                            const friendPending = allUsers[searchUser].pendingRequests || [];
-                                            updates[`users/${searchUser}/pendingRequests`] = [...friendPending, currentUser];
-                                            update(ref(db), updates);
-                                            alert(`> Friend request sent to ${searchUser}`);
-                                        } else {
-                                            alert('> Request pending');
-                                        }
-                                    });
-                                } else {
-                                    alert('> Already friends');
-                                }
-                            });
-                        } else {
-                            alert('> User not found');
-                        }
-                        e.target.value = '';
-                    });
-                }
-            });
+        /**
+         * Возвращает путь к коллекции публичных данных.
+         * @param {string} collectionName Имя коллекции.
+         * @returns {string} Полный путь.
+         */
+        function getPublicCollectionPath(collectionName) {
+            return `artifacts/${appId}/public/data/${collectionName}`;
         }
 
-        function sendMessage(content, type) {
-            if (!selectedFriend) return;
-            const messageObj = {
-                from: currentUser,
-                type: type,
-                content: content,
-                time: new Date().toISOString()
-            };
-            const updates = {};
-            let myMsgs = userData.messages[selectedFriend] || [];
-            myMsgs.push(messageObj);
-            updates[`users/${currentUser}/messages/${selectedFriend}`] = myMsgs;
-
-            let friendMsgs = userData.messages[currentUser] || [];
-            friendMsgs.push(messageObj);
-            updates[`users/${selectedFriend}/messages/${currentUser}`] = friendMsgs;
-
-            update(ref(db), updates);
-            refreshChat();
+        /**
+         * Возвращает путь к коллекции приватных данных пользователя.
+         * @param {string} collectionName Имя коллекции.
+         * @param {string} currentUserId ID текущего пользователя.
+         * @returns {string} Полный путь.
+         */
+        function getPrivateCollectionPath(collectionName, currentUserId) {
+            return `artifacts/${appId}/users/${currentUserId}/${collectionName}`;
         }
 
-        function refreshAll() {
-            refreshFriends();
-            if (selectedFriend) refreshChat();
-        }
+        // --- Инициализация и Аутентификация ---
 
-        function refreshFriends() {
-            const fl = document.getElementById('friends-list');
-            const friends = userData.friends || [];
-            if (friends.length === 0) {
-                fl.innerHTML = '> no friends';
-            } else {
-                fl.innerHTML = friends.map(f => `<div class="friend" data-user="${f}" style="cursor: pointer;">> ${f}</div>`).join('');
-                document.querySelectorAll('.friend').forEach(el => {
-                    el.onclick = () => {
-                        selectedFriend = el.dataset.user;
-                        document.getElementById('call-btn').style.display = 'block';
-                        refreshChat();
-                        document.getElementById('message-input').focus();
-                    };
-                });
-            }
-
-            const pl = document.getElementById('pending-list');
-            const pending = userData.pendingRequests || [];
-            if (pending.length === 0) {
-                pl.innerHTML = '';
-            } else {
-                pl.innerHTML = pending.map(p => `
-> ${p} <button class="button accept" data-user="${p}">accept</button> <button class="button decline" data-user="${p}">decline</button>
-                `).join('');
-                document.querySelectorAll('.accept').forEach(btn => {
-                    btn.onclick = async () => {
-                        const u = btn.dataset.user;
-                        const updates = {};
-                        const myFriends = [...(userData.friends || []), u];
-                        updates[`users/${currentUser}/friends`] = myFriends;
-                        const friendSnap = await get(ref(db, `users/${u}`));
-                        const friendData = friendSnap.val();
-                        const friendFriends = [...(friendData.friends || []), currentUser];
-                        updates[`users/${u}/friends`] = friendFriends;
-                        const myPending = (userData.pendingRequests || []).filter(x => x !== u);
-                        updates[`users/${currentUser}/pendingRequests`] = myPending;
-                        update(ref(db), updates);
-                    };
-                });
-                document.querySelectorAll('.decline').forEach(btn => {
-                    btn.onclick = async () => {
-                        const u = btn.dataset.user;
-                        const myPending = (userData.pendingRequests || []).filter(x => x !== u);
-                        const updates = { [`users/${currentUser}/pendingRequests`]: myPending };
-                        update(ref(db), updates);
-                    };
-                });
-            }
-        }
-
-        function refreshChat() {
-            if (!selectedFriend) {
-                document.getElementById('chat').innerHTML = '> select friend start chatting...';
+        async function initializeFirebase() {
+            if (!firebaseConfig) {
+                console.error("Firebase config is missing!");
+                loadingOverlay.innerHTML = '<p class="text-red-600 font-bold">Ошибка: Настройки Firebase отсутствуют.</p>';
                 return;
             }
-            const msgs = userData.messages[selectedFriend] || [];
-            let html = `> Chat with ${selectedFriend}<br>` + 
-                msgs.map(m => {
-                    if (m.type === 'text') {
-                        return `> ${m.from}: ${m.content}`;
-                    } else if (m.type === 'voice') {
-                        return `> ${m.from}: [VOICE] <audio controls class="audio-player" src="${m.content}"></audio>`;
-                    }
-                    return '';
-                }).join('<br>');
 
-            const callState = userData.callStates[selectedFriend] || {status: 'none'};
-            get(ref(db, `users/${selectedFriend}/callStates/${currentUser}`)).then(snapshot => {
-                const friendCallState = snapshot.val() || {status: 'none'};
+            try {
+                // Инициализация
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
 
-                if (callState.status === 'calling') {
-                    html += `<div class="call-notification">> Calling ${selectedFriend}... <button class="button" onclick="endCall()">End</button></div>`;
-                    document.getElementById('call-btn').textContent = 'end';
-                } else if (friendCallState.status === 'calling') {
-                    html += `<div class="call-notification">> Incoming call from ${selectedFriend}! <button class="button" onclick="acceptCall()">Accept</button> <button class="button" onclick="rejectCall()">Reject</button></div>`;
-                } else if (callState.status === 'active') {
-                    html += `<div class="call-notification">> Call active with ${selectedFriend}</div>`;
-                    html += `<div class="call-controls">
-> Mic: <button class="button" id="mic-toggle-btn" style="color: ${callState.mic ? '#0f0' : '#f00'}">${callState.mic ? 'mute' : 'unmute'}</button>
-> Screen: <button class="button" id="screen-toggle-btn" style="color: ${callState.screen ? '#0f0' : '#f00'}">${callState.screen ? 'stop share' : 'share'}</button>
-> <button class="button" onclick="endCall()">End Call</button>
-</div>`;
-                    setTimeout(() => {
-                        const micBtn = document.getElementById('mic-toggle-btn');
-                        if (micBtn) micBtn.onclick = toggleMic;
-                        const screenBtn = document.getElementById('screen-toggle-btn');
-                        if (screenBtn) screenBtn.onclick = toggleScreen;
-                    }, 0);
-                    document.getElementById('call-btn').textContent = 'end';
+                // Аутентификация
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
                 } else {
-                    document.getElementById('call-btn').textContent = 'call';
+                    await signInAnonymously(auth);
                 }
 
-                if (callState.screen && screenVideo) {
-                    html += screenVideo.outerHTML;
-                }
+                // --- Аутентификация и Запуск Приложения (Перемещено) ---
+                // onAuthStateChanged должен вызываться только после инициализации auth
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        userIdDisplay.textContent = userId;
+                        
+                        // Скрываем загрузочный экран и показываем приложение
+                        loadingOverlay.classList.add('hidden');
+                        appContainer.classList.remove('hidden');
 
-                document.getElementById('chat').innerHTML = html;
-                document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
-            });
+                        // 1. Устанавливаем публичный профиль пользователя
+                        setUserProfile(userId);
+                        
+                        // 2. Начинаем слушать список друзей
+                        listenToFriendships(userId);
+
+                    } else {
+                        userIdDisplay.textContent = 'Не аутентифицирован';
+                    }
+                });
+                // --------------------------------------------------------
+
+            } catch (error) {
+                console.error("Ошибка при инициализации или аутентификации Firebase:", error);
+                // Более информативное сообщение об ошибке на экране:
+                loadingOverlay.innerHTML = `<p class="text-red-600 font-bold">Ошибка Firebase: ${error.message}. Проверьте консоль.</p>`;
+            }
         }
 
-        // Call functions
-        window.acceptCall = async () => {
-            if (selectedFriend) {
-                const updates = {};
-                updates[`users/${currentUser}/callStates/${selectedFriend}`] = {status: 'active', mic: true, screen: false};
-                updates[`users/${selectedFriend}/callStates/${currentUser}`] = {status: 'active', mic: true, screen: false};
-                update(ref(db), updates);
-                await startLocalCall();
-                refreshChat();
-            }
-        };
+        // --- УДАЛЕННЫЙ БЛОК: Аутентификация и Запуск Приложения ---
+        // Этот блок был удален из глобального кода и перемещен в initializeFirebase, 
+        // чтобы гарантировать, что auth инициализирован.
 
-        window.rejectCall = () => {
-            if (selectedFriend) {
-                const updates = {};
-                updates[`users/${selectedFriend}/callStates/${currentUser}`] = {status: 'ended', mic: false, screen: false};
-                update(ref(db), updates);
-                refreshChat();
-            }
-        };
-
-        window.endCall = () => endCall();
-
-        async function startLocalCall() {
+        // 1. Установка публичного профиля пользователя
+        async function setUserProfile(uid) {
+            const userDocRef = doc(db, getPublicCollectionPath('users'), uid);
             try {
-                callStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                localVideo = document.createElement('video');
-                localVideo.srcObject = callStream;
-                localVideo.autoplay = true;
-                localVideo.muted = true;
-                localVideo.className = 'local-video';
-                document.body.appendChild(localVideo);
+                // Устанавливаем базовый профиль, если он не существует
+                await setDoc(userDocRef, { 
+                    username: `User_${uid.substring(0, 5)}`, 
+                    lastActive: serverTimestamp() 
+                }, { merge: true });
+            } catch (e) {
+                console.error("Ошибка установки профиля пользователя:", e);
+                // ВАЖНО: Если тут ошибка, это 99% правила безопасности!
+                console.error("ПРОВЕРЬТЕ ПРАВИЛА БЕЗОПАСНОСТИ FIRESTORE: Не удалось установить публичный профиль.");
+            }
+        }
 
-                peerConnection = new RTCPeerConnection({
-                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        // 2. Слушатель списка друзей
+        function listenToFriendships(currentUserId) {
+            const friendshipsPath = getPrivateCollectionPath('friendships', currentUserId);
+            const q = collection(db, friendshipsPath);
+
+            onSnapshot(q, (snapshot) => {
+                friendList.innerHTML = '';
+                const friends = [];
+
+                snapshot.forEach(doc => {
+                    friends.push(doc.data());
                 });
 
-                callStream.getTracks().forEach(track => peerConnection.addTrack(track, callStream));
+                document.getElementById('friend-count').textContent = friends.length;
 
-                peerConnection.onicecandidate = (event) => {
-                    if (event.candidate) console.log('> ICE candidate');
-                };
-
-                peerConnection.ontrack = (event) => {
-                    console.log('> Remote stream');
-                };
-
-                dataChannel = peerConnection.createDataChannel('control');
-                dataChannel.onopen = () => console.log('> Data channel open');
-                dataChannel.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-                    console.log(`> Remote ${data.type} ${data.enabled ? 'on' : 'off'}`);
-                };
-
-                console.log('> Call started');
-            } catch (err) {
-                alert('> Mic denied');
-            }
-        }
-
-        function toggleMic() {
-            if (selectedFriend && callStream) {
-                const newMic = !userData.callStates[selectedFriend].mic;
-                const updates = {};
-                updates[`users/${currentUser}/callStates/${selectedFriend}/mic`] = newMic;
-                updates[`users/${selectedFriend}/callStates/${currentUser}/mic`] = newMic;
-                update(ref(db), updates);
-
-                const audioTrack = callStream.getAudioTracks()[0];
-                if (audioTrack) audioTrack.enabled = newMic;
-
-                if (dataChannel && dataChannel.readyState === 'open') {
-                    dataChannel.send(JSON.stringify({ type: 'mic', enabled: newMic }));
+                if (friends.length === 0) {
+                    friendList.innerHTML = '<p class="text-gray-500 text-sm p-2">У вас пока нет друзей. Добавьте кого-нибудь по ID!</p>';
+                    return;
                 }
 
-                refreshChat();
-            }
-        }
+                friends.forEach(friend => {
+                    const friendElement = createFriendElement(friend.friendId);
+                    friendList.appendChild(friendElement);
 
-        async function toggleScreen() {
-            if (selectedFriend) {
-                const newScreen = !userData.callStates[selectedFriend].screen;
-                if (newScreen) {
-                    try {
-                        screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-                        screenVideo = document.createElement('video');
-                        screenVideo.srcObject = screenStream;
-                        screenVideo.autoplay = true;
-                        screenVideo.muted = true;
-                        screenVideo.className = 'screen-video';
-
-                        if (peerConnection) {
-                            screenStream.getTracks().forEach(track => peerConnection.addTrack(track, screenStream));
-                        }
-
-                        const updates = {};
-                        updates[`users/${currentUser}/callStates/${selectedFriend}/screen`] = true;
-                        updates[`users/${selectedFriend}/callStates/${currentUser}/screen`] = true;
-                        update(ref(db), updates);
-
-                        if (dataChannel && dataChannel.readyState === 'open') {
-                            dataChannel.send(JSON.stringify({ type: 'screen', enabled: true }));
-                        }
-
-                        refreshChat();
-                    } catch (err) {
-                        alert('> Screen denied');
+                    // Если друг, которого мы сейчас добавляем, является текущим выбранным, обновим его активный статус
+                    if (currentFriendId === friend.friendId) {
+                        friendElement.classList.add('bg-indigo-100', 'border-indigo-400');
                     }
-                } else {
-                    stopLocalStreams();
-                    const updates = {};
-                    updates[`users/${currentUser}/callStates/${selectedFriend}/screen`] = false;
-                    updates[`users/${selectedFriend}/callStates/${currentUser}/screen`] = false;
-                    update(ref(db), updates);
-
-                    if (dataChannel && dataChannel.readyState === 'open') {
-                        dataChannel.send(JSON.stringify({ type: 'screen', enabled: false }));
-                    }
-                    refreshChat();
-                }
-            }
-        }
-
-        // Init
-        if (!currentUser) {
-            showLogin();
-        } else {
-            get(ref(db, `users/${currentUser}`)).then(snapshot => {
-                if (!snapshot.exists()) {
-                    localStorage.removeItem('currentUser');
-                    showLogin();
-                } else {
-                    initApp();
-                }
+                });
+            }, (error) => {
+                console.error("Ошибка при получении списка друзей:", error);
+                // ВАЖНО: Если тут ошибка, это 99% правила безопасности!
+                console.error("ПРОВЕРЬТЕ ПРАВИЛА БЕЗОПАСНОСТИ FIRESTORE: Не удалось получить список друзей.");
+                friendList.innerHTML = `<p class="text-red-500 text-sm p-2">Ошибка загрузки друзей: ${error.message}. Возможно, проблема с правилами безопасности.</p>`;
             });
         }
+
+        /**
+         * Создает элемент списка для друга.
+         * @param {string} friendUid ID друга.
+         * @returns {HTMLElement} Элемент друга.
+         */
+        function createFriendElement(friendUid) {
+            const friendItem = document.createElement('div');
+            friendItem.className = 'p-3 rounded-xl cursor-pointer hover:bg-indigo-50 border border-gray-200 transition duration-150 flex items-center justify-between';
+            friendItem.dataset.id = friendUid;
+            friendItem.innerHTML = `
+                <div class="font-medium truncate">
+                    Друг ID: <span class="text-indigo-600 font-mono">${friendUid.substring(0, 8)}...</span>
+                </div>
+                <div class="text-xs text-gray-500">
+                    <span class="inline-block w-2 h-2 mr-1 bg-green-500 rounded-full"></span> Онлайн
+                </div>
+            `;
+            friendItem.onclick = () => selectFriend(friendUid);
+            return friendItem;
+        }
+
+        // --- Логика Добавления Друга ---
+
+        addFriendBtn.addEventListener('click', async () => {
+            const friendId = friendIdInput.value.trim();
+            if (!friendId) {
+                showMessage(friendStatusMessage, 'Пожалуйста, введите ID друга.', 'text-red-500');
+                return;
+            }
+            if (friendId === userId) {
+                showMessage(friendStatusMessage, 'Нельзя добавить самого себя!', 'text-yellow-600');
+                return;
+            }
+
+            // 1. Проверим, существует ли пользователь с таким ID (проверяем публичный профиль)
+            const friendUserDocRef = doc(db, getPublicCollectionPath('users'), friendId);
+            // Используем getDocs для проверки, так как getDoc может быть запрещен правилами
+            const friendDocSnapshot = await getDoc(friendUserDocRef);
+
+            if (!friendDocSnapshot.exists()) {
+                showMessage(friendStatusMessage, 'Пользователь с таким ID не найден.', 'text-red-500');
+                return;
+            }
+            
+            // 2. Добавляем в список друзей
+            try {
+                const friendshipDocRef = doc(db, getPrivateCollectionPath('friendships', userId), friendId);
+                await setDoc(friendshipDocRef, {
+                    friendId: friendId,
+                    addedAt: serverTimestamp()
+                });
+
+                showMessage(friendStatusMessage, `Друг ID (${friendId.substring(0, 5)}...) успешно добавлен!`, 'text-green-600');
+                friendIdInput.value = ''; // Очистить поле
+            } catch (e) {
+                console.error("Ошибка при добавлении друга:", e);
+                console.error("ПРОВЕРЬТЕ ПРАВИЛА БЕЗОПАСНОСТИ FIRESTORE: Не удалось добавить друга.");
+                showMessage(friendStatusMessage, `Ошибка при добавлении: ${e.message}`, 'text-red-500');
+            }
+        });
+
+        /**
+         * Отображает временное сообщение о статусе.
+         * @param {HTMLElement} element Элемент для отображения сообщения.
+         * @param {string} message Текст сообщения.
+         * @param {string} className CSS класс для стиля (например, 'text-green-500').
+         */
+        function showMessage(element, message, className) {
+            element.textContent = message;
+            element.className = `text-sm mt-2 ${className}`;
+            setTimeout(() => {
+                element.textContent = '';
+                element.className = 'text-sm mt-2';
+            }, 3000);
+        }
+
+        // --- Логика Выбора Друга и Чата ---
+
+        function selectFriend(friendUid) {
+            // Отменить подписку на предыдущий чат
+            if (currentChatSnapshotUnsubscribe) {
+                currentChatSnapshotUnsubscribe();
+            }
+
+            currentFriendId = friendUid;
+            const chatId = getChatId(userId, currentFriendId);
+            
+            // Обновление UI
+            currentChatName.textContent = `Чат с ID: ${friendUid.substring(0, 8)}...`;
+            messagesContainer.innerHTML = '';
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            
+            messageInputContainer.classList.remove('hidden');
+            messageInput.disabled = false;
+            sendMessageBtn.disabled = false;
+            messageInput.focus();
+
+            // Сброс стилей для всех друзей и выделение выбранного
+            document.querySelectorAll('#friend-list > div').forEach(el => {
+                el.classList.remove('bg-indigo-100', 'border-indigo-400');
+            });
+            const selectedFriendEl = document.querySelector(`[data-id="${friendUid}"]`);
+            if (selectedFriendEl) {
+                selectedFriendEl.classList.add('bg-indigo-100', 'border-indigo-400');
+            }
+
+            // Начать слушать новый чат
+            listenToChatMessages(chatId);
+        }
+
+        // --- Логика Сообщений (Real-time) ---
+
+        function listenToChatMessages(chatId) {
+            const messagesPath = getPublicCollectionPath('chats');
+            // Запрос: фильтруем по chatId, сортируем по времени, ограничиваем 50 сообщениями.
+            const q = query(
+                collection(db, messagesPath),
+                where('chatId', '==', chatId),
+                // ВАЖНО: Firestore не поддерживает orderBy() без индекса. Для простоты мы будем сортировать в JS.
+                // orderBy('timestamp', 'asc'), 
+                limit(50) 
+            );
+
+            // Сохраняем функцию отписки для использования при смене чата
+            currentChatSnapshotUnsubscribe = onSnapshot(q, (snapshot) => {
+                let messages = [];
+                snapshot.forEach(doc => {
+                    messages.push({ id: doc.id, ...doc.data() });
+                });
+
+                // Сортировка в JS, так как orderBy() может требовать индекс
+                messages.sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));
+
+                messagesContainer.innerHTML = ''; // Очистить контейнер перед обновлением
+                
+                messages.forEach(msg => {
+                    const isMyMessage = msg.senderId === userId;
+                    const msgElement = createMessageElement(msg, isMyMessage);
+                    messagesContainer.appendChild(msgElement);
+                });
+
+                // Прокрутка вниз
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+            }, (error) => {
+                console.error("Ошибка при получении сообщений:", error);
+                console.error("ПРОВЕРЬТЕ ПРАВИЛА БЕЗОПАСНОСТИ FIRESTORE: Не удалось получить сообщения.");
+                messagesContainer.innerHTML = `<p class="text-red-500 text-sm p-2">Ошибка загрузки сообщений: ${error.message}. Возможно, проблема с правилами безопасности.</p>`;
+            });
+        }
+
+        /**
+         * Создает элемент DOM для одного сообщения.
+         * @param {Object} message Объект сообщения.
+         * @param {boolean} isMyMessage True, если сообщение от текущего пользователя.
+         * @returns {HTMLElement} Элемент сообщения.
+         */
+        function createMessageElement(message, isMyMessage) {
+            const time = message.timestamp ? new Date(message.timestamp.seconds * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : 'сейчас';
+            const senderName = isMyMessage ? 'Вы' : `Друг ID (${message.senderId.substring(0, 4)}...)`;
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `flex ${isMyMessage ? 'justify-end' : 'justify-start'}`;
+            
+            messageDiv.innerHTML = `
+                <div class="max-w-xs md:max-w-md lg:max-w-lg p-3 rounded-xl shadow-md ${isMyMessage ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-gray-200 text-gray-800 rounded-tl-none'}">
+                    <div class="text-xs font-semibold mb-1 ${isMyMessage ? 'text-indigo-200' : 'text-gray-600'}">${senderName}</div>
+                    <p class="whitespace-pre-wrap">${message.text}</p>
+                    <span class="block text-right text-xs mt-1 ${isMyMessage ? 'text-indigo-300' : 'text-gray-500'}">${time}</span>
+                </div>
+            `;
+            return messageDiv;
+        }
+
+        // --- Отправка Сообщения ---
+
+        async function sendMessage() {
+            const text = messageInput.value.trim();
+            if (!text || !currentFriendId || !userId) return;
+
+            const chatId = getChatId(userId, currentFriendId);
+            const messagesPath = getPublicCollectionPath('chats');
+
+            try {
+                await addDoc(collection(db, messagesPath), {
+                    chatId: chatId,
+                    senderId: userId,
+                    text: text,
+                    timestamp: serverTimestamp()
+                });
+                messageInput.value = ''; // Очистка поля
+                messagesContainer.scrollTop = messagesContainer.scrollHeight; // Прокрутка вниз
+            } catch (e) {
+                console.error("Ошибка при отправке сообщения:", e);
+                console.error("ПРОВЕРЬТЕ ПРАВИЛА БЕЗОПАСНОСТИ FIRESTORE: Не удалось отправить сообщение.");
+                // В реальном приложении здесь было бы уведомление
+            }
+        }
+
+        sendMessageBtn.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // --- Копирование ID пользователя ---
+        userIdDisplay.addEventListener('click', () => {
+            const textToCopy = userIdDisplay.textContent;
+            if (textToCopy && textToCopy !== 'Ожидание аутентификации...') {
+                // Использование устаревшего execCommand для совместимости с iFrame
+                const tempInput = document.createElement('textarea');
+                tempInput.value = textToCopy;
+                document.body.appendChild(tempInput);
+                tempInput.select();
+                try {
+                    document.execCommand('copy');
+                    showMessage(userIdDisplay, 'ID скопирован!', 'text-green-600 font-bold');
+                } catch (err) {
+                    console.error('Не удалось скопировать текст: ', err);
+                }
+                document.body.removeChild(tempInput);
+                
+                // Сброс сообщения
+                setTimeout(() => {
+                    userIdDisplay.textContent = userId;
+                    userIdDisplay.className = 'break-all text-sm bg-indigo-100 p-2 rounded-lg mt-1 font-mono cursor-pointer';
+                }, 2000);
+            }
+        });
+
+        // Запуск инициализации при загрузке страницы
+        window.onload = initializeFirebase;
     </script>
+
 </body>
 </html>
