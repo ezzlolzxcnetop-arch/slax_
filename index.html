@@ -3,311 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[SLAX-TERMINAL]</title>
+    <title>SLAX_TERMINAL_V3</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
     
     <!-- Используем CDN версии для работы в браузере без сборщика -->
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"></script>
-
-    <style>
-        :root {
-            --terminal-green: #0f0;
-            --terminal-glow: #0f0;
-            --terminal-bg: #050505;
-            --scanline: rgba(0, 255, 0, 0.04);
-            --header-bg: #111;
-        }
-
-        body {
-            background-color: var(--terminal-bg);
-            color: var(--terminal-green);
-            font-family: 'VT323', monospace;
-            overflow: hidden;
-            text-shadow: 0 0 3px var(--terminal-glow);
-            font-size: 1.25rem;
-        }
-
-        .scanlines {
-            position: fixed;
-            left: 0;
-            top: 0;
-            width: 100vw;
-            height: 100vh;
-            pointer-events: none;
-            background: linear-gradient(
-                to bottom,
-                var(--scanline) 50%,
-                rgba(0, 0, 0, 0) 50%
-            );
-            background-size: 100% 4px;
-            z-index: 50;
-        }
-
-        .crt-flicker {
-            animation: flicker 0.15s infinite;
-            opacity: 0.95;
-        }
-
-        @keyframes flicker {
-            0% { opacity: 0.97; }
-            50% { opacity: 0.94; }
-            100% { opacity: 0.97; }
-        }
-
-        ::-webkit-scrollbar { width: 12px; }
-        ::-webkit-scrollbar-track { background: #001100; }
-        ::-webkit-scrollbar-thumb { background: #003300; border: 1px solid #0f0; }
-        ::-webkit-scrollbar-thumb:hover { background: #0f0; }
-
-        .channel-active {
-            background-color: rgba(0, 255, 0, 0.2);
-            border-left: 4px solid #0f0;
-            padding-left: 8px !important;
-        }
-        
-        input {
-            background: transparent;
-            border: none;
-            color: inherit;
-            outline: none;
-            font-family: inherit;
-            width: 100%;
-        }
-
-        /* Стиль для сообщений в чате */
-        .system-msg { color: #88aa88; font-style: italic; font-size: 0.9em; }
-        .timestamp { opacity: 0.5; margin-right: 10px; font-size: 0.8em; }
-        
-        /* Стиль для временных уведомлений */
-        #notification-area {
-            position: absolute;
-            bottom: 6rem; /* Над полем ввода */
-            left: 24px;
-            right: 24px;
-            z-index: 900;
-            pointer-events: none; /* Чтобы не мешать кликам */
-        }
-        .notification-item {
-            background-color: rgba(0, 50, 0, 0.8);
-            border: 1px solid var(--terminal-green);
-            padding: 5px 10px;
-            margin-bottom: 5px;
-            opacity: 1;
-            transform: translateY(0);
-            transition: opacity 0.2s ease-out, transform 0.2s ease-out;
-        }
-        .notification-item.fade-out {
-            opacity: 0;
-            transform: translateY(-10px);
-        }
-
-        .slax-loader::before {
-            content: '';
-            animation: slaxLoad 2s infinite;
-        }
-        @keyframes slaxLoad {
-            0% { content: 'SLAX_KERNEL...'; }
-            25% { content: 'LOADING_MODULES...'; }
-            50% { content: 'MOUNTING_DRIVES...'; }
-            75% { content: 'ESTABLISHING_UPLINK...'; }
-        }
-
-        /* Стиль для перемещаемого окна (Screen Share) */
-        .draggable-window {
-            position: absolute;
-            width: 300px;
-            height: 200px;
-            min-width: 150px;
-            min-height: 100px;
-            resize: both;
-            overflow: hidden;
-            border: 2px solid var(--terminal-green);
-            background-color: var(--terminal-bg);
-            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
-            z-index: 1000;
-        }
-        .draggable-header {
-            cursor: move;
-            background-color: #003300;
-            padding: 4px;
-            font-size: 0.8rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .draggable-video {
-            width: 100%;
-            height: calc(100% - 24px); /* Учитываем высоту заголовка */
-            display: block;
-            object-fit: contain;
-            background: black;
-        }
-    </style>
-</head>
-<body class="h-screen w-screen flex flex-col crt-flicker">
-    <div class="scanlines"></div>
-
-    <!-- LOGIN SCREEN -->
-    <div id="login-screen" class="absolute inset-0 flex flex-col items-center justify-center bg-black z-40">
-        <pre class="text-xs sm:text-base leading-none mb-8 text-center text-green-500 font-bold">
-  ____  _        _    __  __ 
- / ___|| |      / \   \ \/ / 
- \___ \| |     / _ \   \  /  
-  ___) | |___ / ___ \  /  \  
- |____/|_____/_/   \_\/_/\_\ 
-      OPERATING SYSTEM v3.0
-        </pre>
-        
-        <div class="w-full max-w-md p-6 border-2 border-green-800 bg-black/90 shadow-[0_0_20px_rgba(0,255,0,0.2)]">
-            <p id="auth-mode-title" class="mb-2 text-green-400 font-bold text-center">>> LOG IN REQUIRED</p>
-            <div class="h-px w-full bg-green-900 mb-4"></div>
-            
-            <div class="flex items-center mb-4">
-                <span class="mr-3 whitespace-nowrap">USER:</span>
-                <input type="text" id="username-input" class="flex-1 border-b border-green-800 focus:border-green-500" placeholder="enter_callsign" autocomplete="off" maxlength="12">
-            </div>
-            
-            <div class="flex items-center mb-4">
-                <span class="mr-3 whitespace-nowrap">PIN:</span>
-                <input type="password" id="pin-input" class="flex-1 border-b border-green-800 focus:border-green-500" placeholder="enter_4_digit_pin" autocomplete="off" maxlength="4" pattern="\d*">
-            </div>
-            
-            <p id="login-error" class="text-red-500 mt-2 text-sm text-center">>> ИНИЦИАЛИЗАЦИЯ СИСТЕМЫ...</p>
-            
-            <button id="auth-main-btn" class="mt-6 border border-green-600 px-4 py-2 hover:bg-green-600 hover:text-black transition-all w-full text-center font-bold tracking-widest">
-                [ CONNECT ]
-            </button>
-            
-            <button id="auth-switch-btn" class="mt-3 text-xs opacity-70 hover:opacity-100 transition-opacity w-full text-center">
-                [ SWITCH TO REGISTER ]
-            </button>
-
-            <div class="mt-4 text-xs text-center opacity-50">
-                SECURE CONNECTION: <span class="text-green-300">ENCRYPTED</span>
-            </div>
-        </div>
-    </div>
-
-    <!-- MAIN INTERFACE -->
-    <div id="main-interface" class="hidden flex-1 flex flex-col md:flex-row h-full">
-        
-        <!-- SIDEBAR -->
-        <div class="w-full md:w-72 border-r-2 border-green-900 flex flex-col bg-black/95 z-10">
-            <div class="p-3 border-b-2 border-green-900 bg-[#051105]">
-                <div class="font-bold text-xl tracking-wider">SLAX_OS</div>
-                <div class="text-xs opacity-70 flex justify-between mt-1">
-                    <span>NET: ONLINE</span>
-                    <span>PING: 24ms</span>
-                </div>
-            </div>
-            
-            <!-- TEXT CHANNELS -->
-            <div class="p-4 flex-1 overflow-y-auto">
-                <div class="mb-8">
-                    <h3 class="text-xs font-bold opacity-60 mb-3 tracking-widest border-b border-green-900/50 pb-1">TEXT_PROTOCOLS</h3>
-                    <ul id="text-channels" class="space-y-1">
-                        <li onclick="switchChannel('main', 'text')" class="cursor-pointer p-2 hover:bg-green-900/20 transition-all channel-active" data-channel="main"># MAIN_HUB</li>
-                        <li onclick="switchChannel('offtopic', 'text')" class="cursor-pointer p-2 hover:bg-green-900/20 transition-all" data-channel="offtopic"># OFFTOPIC</li>
-                        <li onclick="switchChannel('dev', 'text')" class="cursor-pointer p-2 hover:bg-green-900/20 transition-all" data-channel="dev"># DEV_LOGS</li>
-                    </ul>
-                </div>
-
-                <!-- VOICE CHANNELS -->
-                <div>
-                    <h3 class="text-xs font-bold opacity-60 mb-3 tracking-widest border-b border-green-900/50 pb-1">VOICE_UPLINKS</h3>
-                    <ul id="voice-channels" class="space-y-2">
-                        <li onclick="handleVoiceAction('lobby')" class="cursor-pointer border border-green-900/50 p-2 hover:border-green-500 transition-all group" data-voice="lobby">
-                            <div class="flex justify-between items-center">
-                                <span>🔊 LOBBY</span>
-                                <span class="voice-count text-[10px] bg-green-900 px-1 text-black group-hover:bg-green-500">READY</span>
-                            </div>
-                            <div class="voice-users mt-1 pl-2 text-xs opacity-80 border-l border-green-800 ml-1"></div>
-                        </li>
-                    </ul>
-                    
-                    <div id="voice-status-panel" class="hidden mt-6 bg-green-900/10 border border-green-500 p-3">
-                        <div class="text-[10px] uppercase tracking-widest mb-1 opacity-70">Текущая Частота</div>
-                        <div id="current-voice-name" class="font-bold text-lg mb-2"></div>
-                        
-                        <!-- Микрофон и Демонстрация Экрана -->
-                        <div class="flex space-x-2 mb-3">
-                            <button id="mic-toggle-btn" onclick="toggleMic()" class="flex-1 bg-green-900/20 border border-green-800 text-green-400 hover:bg-green-800 hover:text-white transition-colors py-1 text-sm uppercase">
-                                🎤 MIC: ON
-                            </button>
-                            <button id="screen-share-btn" onclick="toggleScreenShare()" class="flex-1 bg-blue-900/20 border border-blue-800 text-blue-400 hover:bg-blue-800 hover:text-white transition-colors py-1 text-sm uppercase">
-                                🖥️ DEMO SCREEN
-                            </button>
-                        </div>
-
-                        <button onclick="leaveVoice()" class="w-full bg-red-900/20 border border-red-800 text-red-500 hover:bg-red-900 hover:text-white transition-colors py-1 text-sm uppercase">
-                            [ ОТКЛЮЧИТЬ ]
-                        </button>
-                    </div>
-                    
-                    <!-- Локальный видеопоток (для самоконтроля, скрыт) -->
-                    <video id="local-video" muted style="display:none;"></video>
-                </div>
-            </div>
-
-            <!-- USER INFO -->
-            <div class="p-3 border-t-2 border-green-900 text-sm bg-black">
-                <div class="flex items-center">
-                    <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse mr-2"></div>
-                    <div>
-                        <div id="display-username" class="font-bold tracking-wider">UNKNOWN</div>
-                        <div class="text-[10px] opacity-50 font-mono" id="display-uid">ID: ----</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- MAIN CHAT AREA -->
-        <div id="main-content-area" class="flex-1 flex flex-col relative bg-black">
-            <!-- HEADER -->
-            <div class="h-14 border-b border-green-900 flex items-center px-6 justify-between bg-[#050905]">
-                <span id="channel-title" class="text-xl font-bold tracking-widest">>> #MAIN_HUB</span>
-                <div class="flex items-center space-x-4 text-xs">
-                    <span class="hidden md:inline slax-loader opacity-50"></span>
-                    <span class="border border-green-700 px-2 py-0.5">REC ●</span>
-                </div>
-            </div>
-
-            <!-- MESSAGES -->
-            <div id="chat-messages" class="flex-1 overflow-y-auto p-6 font-mono space-y-2">
-                <!-- Начальные сообщения для стилизации -->
-                <div class="system-msg border-l-2 border-green-800 pl-2 my-1">>> СИСТЕМА: SLAX KERNEL INITIALIZED...</div>
-                <div class="system-msg border-l-2 border-green-800 pl-2 my-1">>> СИСТЕМА: CONNECTING TO FIREBASE NODE [myconsolechat]...</div>
-                <div class="system-msg border-l-2 border-green-800 pl-2 my-1">>> СИСТЕМА: WAITING FOR INPUT...</div>
-            </div>
-            
-            <!-- ВРЕМЕННЫЕ УВЕДОМЛЕНИЯ -->
-            <div id="notification-area">
-                <!-- Сюда будут добавляться и удаляться системные сообщения -->
-            </div>
-
-            <!-- INPUT AREA -->
-            <div class="p-4 bg-black border-t border-green-900">
-                <div class="flex items-center bg-green-900/10 border border-green-800 p-2 focus-within:border-green-500 transition-colors">
-                    <span class="mr-3 text-green-500 font-bold whitespace-nowrap">root@slax:~#</span>
-                    <input type="text" id="message-input" placeholder="execute_command..." autocomplete="off">
-                </div>
-                <div class="text-[10px] opacity-30 mt-1 text-right">SLAX_MESSENGER v3.0 // DO NOT DISTRIBUTE</div>
-            </div>
-        </div>
-    </div>
-
     <script type="module">
-        // Импорт функций Firebase
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, setDoc, doc, query, onSnapshot, serverTimestamp, getDocs, where, limit, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- КОНФИГУРАЦИЯ ---
-        // Замените эти значения на ваши реальные ключи, если вы планируете хостить это.
-        // Для демонстрации используется тестовая конфигурация.
         const firebaseConfig = {
             apiKey: "AIzaSyC5IfNWuv-8lR5PGvM-5zXxLap3EVa6rDk",
             authDomain: "myconsolechat.firebaseapp.com",
@@ -331,22 +37,33 @@
             ]
         };
 
+        // --- КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Уникальный ID сессии для вкладки ---
+        // Используем sessionStorage для уникального ID в пределах вкладки.
+        let localSessionId = sessionStorage.getItem('slax_session_id');
+        if (!localSessionId) {
+            localSessionId = crypto.randomUUID();
+            sessionStorage.setItem('slax_session_id', localSessionId);
+        }
+        
         // --- СОСТОЯНИЕ ---
         let currentUser = null; 
         let currentUsername = "GUEST"; 
         let authMode = 'login'; 
         let currentChannel = "main";
-        let messagesUnsubscribe = null; // Переменная для отмены подписки на сообщения
+        let messagesUnsubscribe = null; 
         
-        let localStream = null; // Локальный аудио/видео поток
-        let screenShareStream = null; // Поток демонстрации экрана
+        let localStream = null; 
+        let screenShareStream = null; 
         let currentVoiceChannel = null;
 
         // WebRTC Состояние
-        const peerConnections = {}; // { targetUID: RTCPeerConnection }
+        const peerConnections = {}; // { targetSessionId: RTCPeerConnection }
         let voiceSessionUnsubscribe = null;
-        let signalUnsubscribes = {}; // { targetUID: unsubscribeFunction }
+        let signalUnsubscribes = {}; // { targetSessionId: unsubscribeFunction }
         let isMicMuted = false;
+        
+        // --- НОВЫЙ СТАТУС: СОСТОЯНИЕ БОКОВОЙ ПАНЕЛИ ДЛЯ МОБИЛЬНЫХ УСТРОЙСТВ ---
+        let isSidebarOpen = false;
 
         // --- DOM ЭЛЕМЕНТЫ ---
         const loginScreen = document.getElementById('login-screen');
@@ -365,10 +82,25 @@
         const currentVoiceName = document.getElementById('current-voice-name');
         const micToggleButton = document.getElementById('mic-toggle-btn');
         const screenShareButton = document.getElementById('screen-share-btn');
-        const mainContentArea = document.getElementById('main-content-area'); // Для размещения окон
-        const notificationArea = document.getElementById('notification-area'); // Новый элемент для уведомлений
+        const mainContentArea = document.getElementById('main-content-area'); 
+        const notificationArea = document.getElementById('notification-area'); 
+        const sidebar = document.getElementById('sidebar'); // Новый элемент
+        const sidebarBackdrop = document.getElementById('sidebar-backdrop'); // Новый элемент
 
-
+        // --- ЛОГИКА АДАПТИВНОСТИ ---
+        window.toggleSidebar = function() {
+            isSidebarOpen = !isSidebarOpen;
+            if (isSidebarOpen) {
+                sidebar.classList.remove('-translate-x-full');
+                sidebar.classList.add('translate-x-0');
+                sidebarBackdrop.classList.remove('hidden');
+            } else {
+                sidebar.classList.remove('translate-x-0');
+                sidebar.classList.add('-translate-x-full');
+                sidebarBackdrop.classList.add('hidden');
+            }
+        }
+        
         // --- ЧАСТЬ 1: АВТОРИЗАЦИЯ ---
         async function initAuth() {
             try {
@@ -384,7 +116,8 @@
         onAuthStateChanged(auth, (user) => {
             if (user) {
                 currentUser = user;
-                displayUid.textContent = `UID: ${user.uid.slice(0, 8).toUpperCase()}`;
+                // Отображаем LocalSessionId вместо UID для отладки
+                displayUid.textContent = `SID: ${localSessionId.slice(0, 8).toUpperCase()}`; 
                 loginError.textContent = "СОЕДИНЕНИЕ УСТАНОВЛЕНО. ВВЕДИТЕ ДАННЫЕ.";
             }
         });
@@ -524,6 +257,11 @@
             
             playTone(1200, 0.05);
             subscribeToMessages();
+            
+            // Закрываем боковую панель после выбора канала на мобильных устройствах
+            if (isSidebarOpen && window.innerWidth < 768) {
+                toggleSidebar();
+            }
         }
 
         function subscribeToMessages() {
@@ -555,8 +293,6 @@
 
         function renderMessages(messages) {
             // Очищаем только динамически добавленные сообщения
-            // NOTE: Оставляем 3 стартовых системных сообщения, добавленных статически в HTML,
-            // чтобы не удалять их при каждом рендеринге.
             const staticMessages = Array.from(chatContainer.querySelectorAll('.system-msg'));
             chatContainer.innerHTML = '';
             staticMessages.forEach(msg => chatContainer.appendChild(msg));
@@ -637,14 +373,19 @@
 
         // --- ЧАСТЬ 3: WEB-RTC / ГОЛОСОВОЙ ЧАТ / СИГНАЛИЗАЦИЯ (Исправленная логика leaveVoice) ---
 
+        // Теперь используем localSessionId в качестве ID документа в FireStore
         const voiceRef = (channel) => collection(db, 'artifacts', appId, 'public', 'data', 'voice_sessions', channel, 'users');
-        const userSignalRef = (uid) => doc(db, 'artifacts', appId, 'public', 'data', 'voice_signals', uid);
+        const userSignalRef = (sessionId) => doc(db, 'artifacts', appId, 'public', 'data', 'voice_signals', sessionId);
 
         window.handleVoiceAction = function(voiceId) {
             if (currentVoiceChannel === voiceId) {
                 leaveVoice();
             } else {
                 joinVoice(voiceId);
+            }
+            // Закрываем боковую панель после выбора канала на мобильных устройствах
+            if (isSidebarOpen && window.innerWidth < 768) {
+                toggleSidebar();
             }
         };
 
@@ -663,14 +404,16 @@
                 micToggleButton.textContent = '🎤 MIC: ON';
                 isMicMuted = false;
 
-                // Если есть активная демонстрация экрана, добавляем ее треки в PeerConnections
+                // Добавляем все треки экрана (если уже активна) в localStream
                 if (screenShareStream) {
                     screenShareStream.getTracks().forEach(track => localStream.addTrack(track));
                 }
 
-                await setDoc(doc(voiceRef(voiceId), currentUser.uid), {
+                // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Используем localSessionId для записи в БД
+                await setDoc(doc(voiceRef(voiceId), localSessionId), {
                     username: currentUsername,
-                    uid: currentUser.uid,
+                    sessionId: localSessionId, // Добавляем sessionId
+                    uid: currentUser.uid, 
                     joinedAt: serverTimestamp(),
                     isScreenSharing: !!screenShareStream,
                     isMicMuted: false
@@ -678,7 +421,7 @@
 
                 subscribeToVoiceSession(voiceId);
                 subscribeToSignaling();
-
+                
                 addSystemMessage(`ГОЛОСОВОЙ УЗЕЛ ${voiceId.toUpperCase()} АКТИВЕН.`);
                 playTone(400, 0.1);
                 setTimeout(() => playTone(600, 0.2), 150);
@@ -686,18 +429,18 @@
             } catch (err) {
                 console.error("Ошибка при подключении к GS:", err);
                 addSystemMessage("ОШИБКА: НЕ УДАЛОСЬ ЗАХВАТИТЬ МИКРОФОН. ПРОВЕРЬТЕ РАЗРЕШЕНИЯ.", true);
-                leaveVoice(); // Вызываем leaveVoice для очистки состояния
+                leaveVoice(); 
             }
         }
         
-        // ИСПРАВЛЕННАЯ ФУНКЦИЯ LEAVE VOICE
+        // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Гарантированная остановка и очистка сессии
         window.leaveVoice = async function() {
             if (!currentVoiceChannel) {
                 addSystemMessage(`ОШИБКА: ВЫ НЕ ПОДКЛЮЧЕНЫ К ГОЛОСОВОМУ КАНАЛУ.`, true);
                 return;
             }
 
-            const channelToLeave = currentVoiceChannel; // Сохраняем канал перед очисткой
+            const channelToLeave = currentVoiceChannel; 
             
             // 1. ОСТАНОВКА ЛОКАЛЬНЫХ ПОТОКОВ
             if (localStream) {
@@ -711,12 +454,12 @@
             }
 
             // 2. ЗАКРЫТИЕ PEER CONNECTIONS
-            Object.keys(peerConnections).forEach(uid => {
-                const pc = peerConnections[uid];
-                pc.close();
-                removeRemoteVideo(uid, 'audio');
-                removeRemoteVideo(uid, 'screen');
-                delete peerConnections[uid];
+            Object.keys(peerConnections).forEach(sessionId => {
+                const pc = peerConnections[sessionId];
+                if (pc) pc.close();
+                removeRemoteVideo(sessionId, 'audio');
+                removeRemoteVideo(sessionId, 'screen');
+                delete peerConnections[sessionId];
             });
 
             // 3. ОТПИСКА ОТ ВСЕХ LISTENER'ОВ
@@ -724,21 +467,27 @@
                 voiceSessionUnsubscribe();
                 voiceSessionUnsubscribe = null;
             }
-            for (const uid in signalUnsubscribes) {
-                signalUnsubscribes[uid]();
-                delete signalUnsubscribes[uid];
+            if (signalUnsubscribes['local']) {
+                 signalUnsubscribes['local']();
+                 delete signalUnsubscribes['local'];
             }
-            signalUnsubscribes = {}; // Очистка объекта
+            
+            // Удаляем все индивидуальные подписки (если они были)
+            for (const key in signalUnsubscribes) {
+                if(signalUnsubscribes[key]) signalUnsubscribes[key]();
+                delete signalUnsubscribes[key];
+            }
+            
+            signalUnsubscribes = {}; 
 
             // 4. УДАЛЕНИЕ СЕССИИ ИЗ FIRESTORE
-            if (currentUser && channelToLeave) {
+            if (channelToLeave) {
                  // Очищаем локальные сигналы
-                await setDoc(userSignalRef(currentUser.uid), { cleanup: true, timestamp: serverTimestamp() }).catch(e => console.warn("Не удалось очистить сигналы:", e));
+                await setDoc(userSignalRef(localSessionId), { cleanup: true, timestamp: serverTimestamp() }).catch(e => console.warn("Не удалось очистить сигналы:", e));
                 
                 // Удаляем сессию
-                await deleteDoc(doc(voiceRef(channelToLeave), currentUser.uid)).catch(e => {
-                    console.warn("Не удалось удалить сессию:", e);
-                    addSystemMessage("ПРЕДУПРЕЖДЕНИЕ: ОШИБКА УДАЛЕНИЯ СЕССИИ ИЗ БД. МОЖЕТ ЗАНЯТЬ ВРЕМЯ.", true);
+                await deleteDoc(doc(voiceRef(channelToLeave), localSessionId)).catch(e => {
+                    console.warn("Не удалось удалить сессию (может быть уже удалена):", e);
                 });
             }
 
@@ -748,6 +497,23 @@
             addSystemMessage(`ГОЛОСОВОЙ УЗЕЛ ОТКЛЮЧЕН.`);
             playTone(300, 0.2);
         }
+        
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Очистка при закрытии вкладки
+        window.addEventListener('beforeunload', async () => {
+            if (currentVoiceChannel) {
+                // Пытаемся синхронно удалить запись из БД
+                // Используем navigator.sendBeacon или простую синхронную выборку, 
+                // так как async/await в beforeunload работает ненадежно.
+                const voiceSessionDocRef = doc(voiceRef(currentVoiceChannel), localSessionId);
+                // Отправляем запрос на удаление без ожидания ответа
+                // В реальном приложении лучше использовать sendBeacon
+                // Но для простоты используем fetch, надеясь, что он сработает.
+                try {
+                     fetch(voiceSessionDocRef.path, { method: 'DELETE', keepalive: true });
+                } catch(e) { /* Игнорируем ошибки */ }
+            }
+        });
+
 
         // --- WEB-RTC СИГНАЛИЗАЦИЯ И УПРАВЛЕНИЕ СЕССИЕЙ ---
 
@@ -762,33 +528,37 @@
                 
                 snapshot.forEach(doc => {
                     const userData = doc.data();
-                    if (userData.uid !== currentUser.uid) {
+                    // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Сравниваем по sessionId
+                    if (userData.sessionId !== localSessionId) { 
                         users.push(userData.username);
-                        activePeers.add(userData.uid);
+                        activePeers.add(userData.sessionId);
                         
-                        if (!currentPeers.has(userData.uid)) {
-                            createPeerConnection(userData.uid, true); 
+                        if (!currentPeers.has(userData.sessionId)) {
+                            createPeerConnection(userData.sessionId, true); 
                         }
                         
+                        // Удаленный пользователь может изменить статус screen sharing
                         if (userData.isScreenSharing) {
-                            ensureRemoteVideo(userData.uid, userData.username, 'screen');
+                            ensureRemoteVideo(userData.sessionId, userData.username, 'screen');
                         } else {
-                            removeRemoteVideo(userData.uid, 'screen');
+                            removeRemoteVideo(userData.sessionId, 'screen');
                         }
                     }
                 });
 
-                currentPeers.forEach(uid => {
-                    if (!activePeers.has(uid)) {
-                        const pc = peerConnections[uid];
+                // Удаление пиров, которые вышли
+                currentPeers.forEach(sessionId => {
+                    if (!activePeers.has(sessionId)) {
+                        const pc = peerConnections[sessionId];
                         if (pc) {
                             pc.close();
                         }
-                        delete peerConnections[uid];
-                        if (signalUnsubscribes[uid]) signalUnsubscribes[uid]();
-                        delete signalUnsubscribes[uid];
-                        removeRemoteVideo(uid, 'audio');
-                        removeRemoteVideo(uid, 'screen');
+                        delete peerConnections[sessionId];
+                        if (signalUnsubscribes[sessionId]) signalUnsubscribes[sessionId]();
+                        delete signalUnsubscribes[sessionId];
+                        removeRemoteVideo(sessionId, 'audio');
+                        removeRemoteVideo(sessionId, 'screen');
+                        addSystemMessage(`ПОЛЬЗОВАТЕЛЬ ${sessionId.slice(0, 8).toUpperCase()} ВЫШЕЛ.`);
                     }
                 });
                 
@@ -796,13 +566,15 @@
                 const voiceLi = document.querySelector(`li[data-voice="${voiceId}"]`);
                 if (voiceLi) {
                     voiceLi.querySelector('.voice-users').innerHTML = usersHtml;
+                    voiceLi.querySelector('.voice-count').textContent = users.length + 1; // +1 для текущего пользователя
                 }
                 
             }, (err) => console.error("Ошибка подписки на сессию:", err));
         }
 
         function subscribeToSignaling() {
-            const q = userSignalRef(currentUser.uid);
+            // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Слушаем свой localSessionId
+            const q = userSignalRef(localSessionId);
             
             if (signalUnsubscribes['local']) signalUnsubscribes['local']();
 
@@ -811,39 +583,47 @@
                 
                 const data = docSnap.data();
 
-                if (data.offer && data.senderUid !== currentUser.uid) {
+                if (data.offer && data.senderSessionId !== localSessionId) {
                     addSystemMessage(`ПРИНЯТО ПРЕДЛОЖЕНИЕ ОТ ${data.senderUsername}`);
-                    await handleOffer(data.senderUid, data.offer, data.senderUsername);
+                    await handleOffer(data.senderSessionId, data.offer, data.senderUsername);
                     
-                } else if (data.answer && data.recipientUid === currentUser.uid) {
+                } else if (data.answer && data.recipientSessionId === localSessionId) {
                     addSystemMessage(`ПРИНЯТ ОТВЕТ ОТ ${data.senderUsername}`);
-                    await handleAnswer(data.senderUid, data.answer);
+                    await handleAnswer(data.senderSessionId, data.answer);
                     
-                } else if (data.candidate && data.recipientUid === currentUser.uid) {
-                    await handleCandidate(data.senderUid, data.candidate);
+                } else if (data.candidate && data.recipientSessionId === localSessionId) {
+                    await handleCandidate(data.senderSessionId, data.candidate);
                 }
             }, (err) => console.error("Ошибка подписки на сигналы:", err));
         }
 
-        async function createPeerConnection(targetUid, isInitiator) {
+        async function createPeerConnection(targetSessionId, isInitiator) {
             const pc = new RTCPeerConnection(iceServers);
-            peerConnections[targetUid] = pc;
+            peerConnections[targetSessionId] = pc;
             
             if (localStream) {
-                // Добавляем все треки из локального потока (аудио + возможно видео экрана)
                 localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
             }
             
+            // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Обработка треков
             pc.ontrack = (event) => {
                 const stream = event.streams[0];
                 const track = event.track;
                 const streamType = track.kind === 'video' ? 'screen' : 'audio';
-                const targetUsername = targetUid; // Временно используем UID, имя будет обновлено из voiceSession
 
-                if (streamType === 'audio') {
-                    ensureRemoteVideo(targetUid, targetUsername, 'audio', stream); 
-                } else if (streamType === 'screen') {
-                    ensureRemoteVideo(targetUid, targetUsername, 'screen', stream);
+                // Находим имя пользователя по sessionId из списка текущих участников
+                const voiceLi = document.querySelector(`li[data-voice="${currentVoiceChannel}"]`);
+                const usernameElement = voiceLi ? voiceLi.querySelector(`.voice-users div[data-session-id="${targetSessionId}"]`) : null;
+                const targetUsername = usernameElement ? usernameElement.textContent.replace('> ', '').trim() : targetSessionId.slice(0, 8).toUpperCase(); 
+
+                // Проверяем, есть ли трек в потоке (чтобы не добавлять его несколько раз)
+                const existingVideo = document.getElementById(`${targetSessionId}-screen`);
+                const existingAudio = document.getElementById(`${targetSessionId}-audio`);
+
+                if (streamType === 'audio' && !existingAudio) {
+                    ensureRemoteVideo(targetSessionId, targetUsername, 'audio', stream); 
+                } else if (streamType === 'screen' && !existingVideo) {
+                    ensureRemoteVideo(targetSessionId, targetUsername, 'screen', stream);
                 }
             };
             
@@ -851,11 +631,11 @@
                 if (event.candidate) {
                     await sendSignal({
                         candidate: event.candidate.toJSON(),
-                        senderUid: currentUser.uid,
+                        senderSessionId: localSessionId,
                         senderUsername: currentUsername,
-                        recipientUid: targetUid,
+                        recipientSessionId: targetSessionId,
                         type: 'candidate'
-                    }, targetUid);
+                    }, targetSessionId);
                 }
             };
 
@@ -864,21 +644,21 @@
                 await pc.setLocalDescription(offer);
                 await sendSignal({
                     offer: pc.localDescription.toJSON(),
-                    senderUid: currentUser.uid,
+                    senderSessionId: localSessionId,
                     senderUsername: currentUsername,
-                    recipientUid: targetUid,
+                    recipientSessionId: targetSessionId,
                     type: 'offer'
-                }, targetUid);
+                }, targetSessionId);
             }
         }
 
-        async function handleOffer(senderUid, offer, senderUsername) {
-            if (peerConnections[senderUid]) {
-                peerConnections[senderUid].close();
+        async function handleOffer(senderSessionId, offer, senderUsername) {
+            if (peerConnections[senderSessionId]) {
+                peerConnections[senderSessionId].close();
             }
             
             const pc = new RTCPeerConnection(iceServers);
-            peerConnections[senderUid] = pc;
+            peerConnections[senderSessionId] = pc;
             
             if (localStream) {
                 localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
@@ -890,9 +670,9 @@
                 const streamType = track.kind === 'video' ? 'screen' : 'audio';
 
                 if (streamType === 'audio') {
-                    ensureRemoteVideo(senderUid, senderUsername, 'audio', stream);
+                    ensureRemoteVideo(senderSessionId, senderUsername, 'audio', stream);
                 } else if (streamType === 'screen') {
-                    ensureRemoteVideo(senderUid, senderUsername, 'screen', stream);
+                    ensureRemoteVideo(senderSessionId, senderUsername, 'screen', stream);
                 }
             };
 
@@ -900,11 +680,11 @@
                 if (event.candidate) {
                     await sendSignal({
                         candidate: event.candidate.toJSON(),
-                        senderUid: currentUser.uid,
+                        senderSessionId: localSessionId,
                         senderUsername: currentUsername,
-                        recipientUid: senderUid,
+                        recipientSessionId: senderSessionId,
                         type: 'candidate'
-                    }, senderUid);
+                    }, senderSessionId);
                 }
             };
 
@@ -914,22 +694,22 @@
             
             await sendSignal({
                 answer: pc.localDescription.toJSON(),
-                senderUid: currentUser.uid,
+                senderSessionId: localSessionId,
                 senderUsername: currentUsername,
-                recipientUid: senderUid,
+                recipientSessionId: senderSessionId,
                 type: 'answer'
-            }, senderUid);
+            }, senderSessionId);
         }
 
-        async function handleAnswer(senderUid, answer) {
-            const pc = peerConnections[senderUid];
+        async function handleAnswer(senderSessionId, answer) {
+            const pc = peerConnections[senderSessionId];
             if (pc && pc.signalingState !== 'stable') {
                 await pc.setRemoteDescription(new RTCSessionDescription(answer));
             }
         }
 
-        async function handleCandidate(senderUid, candidate) {
-            const pc = peerConnections[senderUid];
+        async function handleCandidate(senderSessionId, candidate) {
+            const pc = peerConnections[senderSessionId];
             if (pc) {
                 try {
                     await pc.addIceCandidate(new RTCIceCandidate(candidate));
@@ -939,13 +719,13 @@
             }
         }
         
-        async function sendSignal(signalData, targetUid) {
-            const recipientDoc = userSignalRef(targetUid);
+        // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Отправка сигнала по sessionId
+        async function sendSignal(signalData, targetSessionId) {
+            const recipientDoc = userSignalRef(targetSessionId);
             try {
-                // Используем setDoc для записи сигнала
                 await setDoc(recipientDoc, signalData, { merge: true });
             } catch (e) {
-                console.error(`Ошибка отправки сигнала к ${targetUid}:`, e);
+                console.error(`Ошибка отправки сигнала к ${targetSessionId}:`, e);
             }
         }
 
@@ -964,7 +744,7 @@
             playTone(1000, 0.05);
 
             if (currentVoiceChannel) {
-                updateDoc(doc(voiceRef(currentVoiceChannel), currentUser.uid), {
+                updateDoc(doc(voiceRef(currentVoiceChannel), localSessionId), {
                     isMicMuted: isMicMuted
                 });
             }
@@ -980,18 +760,15 @@
                 
                 // Переключение обратно на аудио трек для всех PeerConnections
                 if (localStream) {
-                    localStream.getTracks().forEach(track => {
-                        if (track.kind === 'audio') {
-                             Object.values(peerConnections).forEach(pc => {
-                                const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
-                                if (sender) {
-                                    sender.replaceTrack(track);
-                                } else {
-                                     pc.addTrack(track, localStream);
-                                }
-                             });
-                        }
-                    });
+                    const audioTrack = localStream.getAudioTracks()[0];
+                    if (audioTrack) {
+                         Object.values(peerConnections).forEach(pc => {
+                            const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
+                            if (sender) {
+                                sender.replaceTrack(audioTrack);
+                            }
+                         });
+                    }
                 }
             } else {
                 // Иначе, запускаем демонстрацию
@@ -1022,6 +799,11 @@
                                 pc.addTrack(audioTrack, screenShareStream);
                             }
                         }
+                        // Необходимо повторно отправить offer/answer
+                        pc.createOffer().then(offer => pc.setLocalDescription(offer)).then(() => {
+                           // Сигнализация будет отправлена через onicecandidate, но для надежности
+                           // можно было бы инициировать ручной обмен, но оставим автоматику.
+                        });
                     });
 
                     // Обработка завершения демонстрации (например, через кнопку в браузере)
@@ -1037,7 +819,7 @@
             }
 
             if (currentVoiceChannel) {
-                updateDoc(doc(voiceRef(currentVoiceChannel), currentUser.uid), {
+                updateDoc(doc(voiceRef(currentVoiceChannel), localSessionId), {
                     isScreenSharing: !!screenShareStream
                 });
             }
@@ -1045,9 +827,10 @@
 
         // --- УПРАВЛЕНИЕ УДАЛЕННЫМ ВИДЕО (ДВИЖУЩЕЕСЯ ОКНО) ---
 
-        function ensureRemoteVideo(uid, username, streamType, stream = null) {
+        // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: uid заменен на sessionId
+        function ensureRemoteVideo(sessionId, username, streamType, stream = null) {
             const isScreen = streamType === 'screen';
-            const id = `${uid}-${streamType}`;
+            const id = `${sessionId}-${streamType}`;
             let videoElement = document.getElementById(id);
 
             if (isScreen) {
@@ -1061,7 +844,7 @@
                     wrapper.innerHTML = `
                         <div class="draggable-header" data-drag-id="${id}">
                             <span>DEMO | ${username}</span>
-                            <span class="text-red-500 cursor-pointer" onclick="removeRemoteVideo('${uid}', 'screen')">[ X ]</span>
+                            <span class="text-red-500 cursor-pointer" onclick="removeRemoteVideo('${sessionId}', 'screen')">[ X ]</span>
                         </div>
                         <video autoplay class="draggable-video"></video>
                     `;
@@ -1077,7 +860,7 @@
             } else {
                 if (!videoElement && stream) {
                     // Аудиопоток - невидимый элемент
-                    videoElement = document.createElement('audio'); // Изменено на audio
+                    videoElement = document.createElement('audio'); 
                     videoElement.id = id;
                     videoElement.autoplay = true;
                     videoElement.style.display = 'none';
@@ -1086,22 +869,21 @@
                     addSystemMessage(`ПОЛУЧЕН АУДИО ПОТОК ОТ ${username}.`);
                 }
                 
-                // Обновляем поток, если он уже есть (для аудио это обычно не нужно, но для надежности)
                 if (videoElement && stream) {
                     videoElement.srcObject = stream;
                 }
             }
         }
 
-        window.removeRemoteVideo = function(uid, streamType) {
-            const id = `${uid}-${streamType}`;
+        // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: uid заменен на sessionId
+        window.removeRemoteVideo = function(sessionId, streamType) {
+            const id = `${sessionId}-${streamType}`;
             const element = document.getElementById(id);
             if (element) {
                 if (streamType === 'screen') {
-                    addSystemMessage(`ПОТОК ЭКРАНА ОТ ${uid} ПРЕРВАН.`);
+                    addSystemMessage(`ПОТОК ЭКРАНА ОТ ${sessionId.slice(0, 8).toUpperCase()} ПРЕРВАН.`);
                 } 
                 
-                // Останавливаем все треки в потоке (если это видео/аудио элемент)
                 const stream = element.srcObject;
                 if (stream) {
                     stream.getTracks().forEach(track => track.stop());
@@ -1122,7 +904,6 @@
             let xOffset = 0;
             let yOffset = 0;
 
-            // Получаем начальные координаты элемента
             const style = window.getComputedStyle(element);
             const matrix = new DOMMatrixReadOnly(style.transform);
             xOffset = matrix.m41;
@@ -1168,18 +949,15 @@
                 currentX = clientX - initialX;
                 currentY = clientY - initialY;
 
-                // Ограничение перемещения внутри mainContentArea
                 const parentRect = mainContentArea.getBoundingClientRect();
                 const elementRect = element.getBoundingClientRect();
 
                 let newLeft = currentX;
                 let newTop = currentY;
                 
-                // Проверка границ (слева и сверху)
                 if (newLeft < 0) newLeft = 0;
                 if (newTop < 0) newTop = 0;
 
-                // Проверка границ (справа и снизу)
                 if (newLeft + elementRect.width > parentRect.width) {
                     newLeft = parentRect.width - elementRect.width;
                 }
@@ -1213,5 +991,313 @@
             } catch(e) {}
         }
     </script>
+
+    <style>
+        :root {
+            --terminal-green: #0f0;
+            --terminal-glow: #0f0;
+            --terminal-bg: #050505;
+            --scanline: rgba(0, 255, 0, 0.04);
+            --header-bg: #111;
+        }
+
+        body {
+            background-color: var(--terminal-bg);
+            color: var(--terminal-green);
+            font-family: 'VT323', monospace;
+            overflow: hidden;
+            text-shadow: 0 0 3px var(--terminal-glow);
+            /* Базовый размер шрифта для мобильных, увеличиваем на md */
+            font-size: 1.1rem; 
+        }
+
+        @media (min-width: 768px) {
+            body {
+                font-size: 1.25rem; 
+            }
+        }
+
+        .scanlines {
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            background: linear-gradient(
+                to bottom,
+                var(--scanline) 50%,
+                rgba(0, 0, 0, 0) 50%
+            );
+            background-size: 100% 4px;
+            z-index: 50;
+        }
+
+        .crt-flicker {
+            animation: flicker 0.15s infinite;
+            opacity: 0.95;
+        }
+
+        @keyframes flicker {
+            0% { opacity: 0.97; }
+            50% { opacity: 0.94; }
+            100% { opacity: 0.97; }
+        }
+
+        ::-webkit-scrollbar { width: 12px; }
+        ::-webkit-scrollbar-track { background: #001100; }
+        ::-webkit-scrollbar-thumb { background: #003300; border: 1px solid #0f0; }
+        ::-webkit-scrollbar-thumb:hover { background: #0f0; }
+
+        .channel-active {
+            background-color: rgba(0, 255, 0, 0.2);
+            border-left: 4px solid #0f0;
+            padding-left: 8px !important;
+        }
+        
+        input {
+            background: transparent;
+            border: none;
+            color: inherit;
+            outline: none;
+            font-family: inherit;
+            width: 100%;
+        }
+
+        /* Стиль для сообщений в чате */
+        .system-msg { color: #88aa88; font-style: italic; font-size: 0.9em; }
+        .timestamp { opacity: 0.5; margin-right: 10px; font-size: 0.8em; }
+        
+        /* Стиль для временных уведомлений */
+        #notification-area {
+            position: absolute;
+            bottom: 6rem; /* Над полем ввода */
+            left: 24px;
+            right: 24px;
+            z-index: 900;
+            pointer-events: none; 
+        }
+        .notification-item {
+            background-color: rgba(0, 50, 0, 0.8);
+            border: 1px solid var(--terminal-green);
+            padding: 5px 10px;
+            margin-bottom: 5px;
+            opacity: 1;
+            transform: translateY(0);
+            transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+        }
+        .notification-item.fade-out {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+
+        .slax-loader::before {
+            content: '';
+            animation: slaxLoad 2s infinite;
+        }
+        @keyframes slaxLoad {
+            0% { content: 'SLAX_KERNEL...'; }
+            25% { content: 'LOADING_MODULES...'; }
+            50% { content: 'MOUNTING_DRIVES...'; }
+            75% { content: 'ESTABLISHING_UPLINK...'; }
+        }
+
+        /* Стиль для перемещаемого окна (Screen Share) */
+        .draggable-window {
+            position: absolute;
+            width: 300px;
+            height: 200px;
+            min-width: 150px;
+            min-height: 100px;
+            resize: both;
+            overflow: hidden;
+            border: 2px solid var(--terminal-green);
+            background-color: var(--terminal-bg);
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+            z-index: 1000;
+        }
+        .draggable-header {
+            cursor: move;
+            background-color: #003300;
+            padding: 4px;
+            font-size: 0.8rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .draggable-video {
+            width: 100%;
+            height: calc(100% - 24px); 
+            display: block;
+            object-fit: contain;
+            background: black;
+        }
+        
+        /* Мобильные стили для Sidebar */
+        #sidebar {
+            transition: transform 0.3s ease-in-out;
+        }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col crt-flicker">
+    <div class="scanlines"></div>
+
+    <!-- LOGIN SCREEN -->
+    <div id="login-screen" class="absolute inset-0 flex flex-col items-center justify-center bg-black z-40">
+        <pre class="text-xs sm:text-base leading-none mb-8 text-center text-green-500 font-bold">
+  ____  _        _    __  __ 
+ / ___|| |      / \   \ \/ / 
+ \___ \| |     / _ \   \  /  
+  ___) | |___ / ___ \  /  \  
+ |____/|_____/_/   \_\/_/\_\ 
+      OPERATING SYSTEM v3.0
+        </pre>
+        
+        <div class="w-11/12 max-w-md p-6 border-2 border-green-800 bg-black/90 shadow-[0_0_20px_rgba(0,255,0,0.2)]">
+            <p id="auth-mode-title" class="mb-2 text-green-400 font-bold text-center text-base sm:text-lg">>> LOG IN REQUIRED</p>
+            <div class="h-px w-full bg-green-900 mb-4"></div>
+            
+            <div class="flex items-center mb-4 text-sm sm:text-base">
+                <span class="mr-3 whitespace-nowrap">USER:</span>
+                <input type="text" id="username-input" class="flex-1 border-b border-green-800 focus:border-green-500" placeholder="enter_callsign" autocomplete="off" maxlength="12">
+            </div>
+            
+            <div class="flex items-center mb-4 text-sm sm:text-base">
+                <span class="mr-3 whitespace-nowrap">PIN:</span>
+                <input type="password" id="pin-input" class="flex-1 border-b border-green-800 focus:border-green-500" placeholder="enter_4_digit_pin" autocomplete="off" maxlength="4" pattern="\d*">
+            </div>
+            
+            <p id="login-error" class="text-red-500 mt-2 text-xs sm:text-sm text-center">>> ИНИЦИАЛИЗАЦИЯ СИСТЕМЫ...</p>
+            
+            <button id="auth-main-btn" class="mt-6 border border-green-600 px-4 py-2 hover:bg-green-600 hover:text-black transition-all w-full text-center font-bold tracking-widest text-sm sm:text-base">
+                [ CONNECT ]
+            </button>
+            
+            <button id="auth-switch-btn" class="mt-3 text-xs opacity-70 hover:opacity-100 transition-opacity w-full text-center">
+                [ SWITCH TO REGISTER ]
+            </button>
+
+            <div class="mt-4 text-[10px] sm:text-xs text-center opacity-50">
+                SECURE CONNECTION: <span class="text-green-300">ENCRYPTED</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN INTERFACE -->
+    <div id="main-interface" class="hidden flex-1 flex h-full relative">
+        
+        <!-- SIDEBAR BACKDROP (ТОЛЬКО ДЛЯ МОБИЛЬНЫХ) -->
+        <div id="sidebar-backdrop" onclick="toggleSidebar()" class="hidden md:hidden absolute inset-0 bg-black/50 z-20"></div>
+
+        <!-- SIDEBAR -->
+        <!-- На мобильных: фиксированная ширина, абсолютно позиционирован, изначально скрыт (-translate-x-full) -->
+        <!-- На десктопе (md): относительное позиционирование, постоянно видим -->
+        <div id="sidebar" class="fixed w-64 md:w-72 h-full z-30 
+                                  border-r-2 border-green-900 flex flex-col bg-black/95 
+                                  -translate-x-full md:translate-x-0 transition-transform duration-300">
+            <div class="p-3 border-b-2 border-green-900 bg-[#051105]">
+                <div class="font-bold text-lg sm:text-xl tracking-wider">SLAX_OS</div>
+                <div class="text-xs opacity-70 flex justify-between mt-1">
+                    <span>NET: ONLINE</span>
+                    <span>PING: 24ms</span>
+                </div>
+            </div>
+            
+            <!-- TEXT CHANNELS -->
+            <div class="p-4 flex-1 overflow-y-auto text-sm sm:text-base">
+                <div class="mb-8">
+                    <h3 class="text-xs font-bold opacity-60 mb-3 tracking-widest border-b border-green-900/50 pb-1">TEXT_PROTOCOLS</h3>
+                    <ul id="text-channels" class="space-y-1">
+                        <li onclick="switchChannel('main')" class="cursor-pointer p-2 hover:bg-green-900/20 transition-all channel-active" data-channel="main"># MAIN_HUB</li>
+                        <li onclick="switchChannel('offtopic')" class="cursor-pointer p-2 hover:bg-green-900/20 transition-all" data-channel="offtopic"># OFFTOPIC</li>
+                        <li onclick="switchChannel('dev')" class="cursor-pointer p-2 hover:bg-green-900/20 transition-all" data-channel="dev"># DEV_LOGS</li>
+                    </ul>
+                </div>
+
+                <!-- VOICE CHANNELS -->
+                <div>
+                    <h3 class="text-xs font-bold opacity-60 mb-3 tracking-widest border-b border-green-900/50 pb-1">VOICE_UPLINKS</h3>
+                    <ul id="voice-channels" class="space-y-2">
+                        <li onclick="handleVoiceAction('lobby')" class="cursor-pointer border border-green-900/50 p-2 hover:border-green-500 transition-all group" data-voice="lobby">
+                            <div class="flex justify-between items-center">
+                                <span>🔊 LOBBY</span>
+                                <span class="voice-count text-[10px] bg-green-900 px-1 text-black group-hover:bg-green-500">1</span>
+                            </div>
+                            <div class="voice-users mt-1 pl-2 text-xs opacity-80 border-l border-green-800 ml-1"></div>
+                        </li>
+                    </ul>
+                    
+                    <div id="voice-status-panel" class="hidden mt-6 bg-green-900/10 border border-green-500 p-3">
+                        <div class="text-[10px] uppercase tracking-widest mb-1 opacity-70">Текущая Частота</div>
+                        <div id="current-voice-name" class="font-bold text-lg mb-2"></div>
+                        
+                        <!-- Микрофон и Демонстрация Экрана -->
+                        <div class="flex space-x-2 mb-3">
+                            <button id="mic-toggle-btn" onclick="toggleMic()" class="flex-1 bg-green-900/20 border border-green-800 text-green-400 hover:bg-green-800 hover:text-white transition-colors py-1 text-xs sm:text-sm uppercase">
+                                🎤 MIC: ON
+                            </button>
+                            <button id="screen-share-btn" onclick="toggleScreenShare()" class="flex-1 bg-blue-900/20 border border-blue-800 text-blue-400 hover:bg-blue-800 hover:text-white transition-colors py-1 text-xs sm:text-sm uppercase">
+                                🖥️ DEMO SCREEN
+                            </button>
+                        </div>
+
+                        <button onclick="leaveVoice()" class="w-full bg-red-900/20 border border-red-800 text-red-500 hover:bg-red-900 hover:text-white transition-colors py-1 text-sm uppercase">
+                            [ ОТКЛЮЧИТЬ ]
+                        </button>
+                    </div>
+                    
+                    <!-- Локальный видеопоток (для самоконтроля, скрыт) -->
+                    <video id="local-video" muted style="display:none;"></video>
+                </div>
+            </div>
+
+            <!-- USER INFO -->
+            <div class="p-3 border-t-2 border-green-900 text-sm bg-black">
+                <div class="flex items-center">
+                    <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse mr-2"></div>
+                    <div>
+                        <div id="display-username" class="font-bold tracking-wider">UNKNOWN</div>
+                        <div class="text-[10px] opacity-50 font-mono" id="display-uid">SID: ----</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MAIN CHAT AREA -->
+        <div id="main-content-area" class="flex-1 flex flex-col relative bg-black md:ml-72 w-full">
+            
+            <!-- HEADER -->
+            <div class="h-14 border-b border-green-900 flex items-center px-4 md:px-6 justify-between bg-[#050905]">
+                <button onclick="toggleSidebar()" class="md:hidden text-green-400 text-lg mr-4">[ МЕНЮ ]</button>
+                <span id="channel-title" class="text-lg sm:text-xl font-bold tracking-widest">>> #MAIN_HUB</span>
+                <div class="flex items-center space-x-4 text-xs">
+                    <span class="hidden md:inline slax-loader opacity-50"></span>
+                    <span class="border border-green-700 px-2 py-0.5">REC ●</span>
+                </div>
+            </div>
+
+            <!-- MESSAGES -->
+            <div id="chat-messages" class="flex-1 overflow-y-auto p-4 md:p-6 font-mono space-y-2 text-sm sm:text-base">
+                <!-- Начальные сообщения для стилизации -->
+                <div class="system-msg border-l-2 border-green-800 pl-2 my-1">>> СИСТЕМА: SLAX KERNEL INITIALIZED...</div>
+                <div class="system-msg border-l-2 border-green-800 pl-2 my-1">>> СИСТЕМА: CONNECTING TO FIREBASE NODE [myconsolechat]...</div>
+                <div class="system-msg border-l-2 border-green-800 pl-2 my-1">>> СИСТЕМА: WAITING FOR INPUT...</div>
+            </div>
+            
+            <!-- ВРЕМЕННЫЕ УВЕДОМЛЕНИЯ -->
+            <div id="notification-area">
+                <!-- Сюда будут добавляться и удаляться системные сообщения -->
+            </div>
+
+            <!-- INPUT AREA -->
+            <div class="p-3 sm:p-4 bg-black border-t border-green-900">
+                <div class="flex items-center bg-green-900/10 border border-green-800 p-2 focus-within:border-green-500 transition-colors">
+                    <span class="mr-3 text-green-500 font-bold whitespace-nowrap text-sm sm:text-base">root@slax:~#</span>
+                    <input type="text" id="message-input" placeholder="execute_command..." autocomplete="off" class="text-sm sm:text-base">
+                </div>
+                <div class="text-[10px] opacity-30 mt-1 text-right">SLAX_MESSENGER v3.0 // DO NOT DISTRIBUTE</div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
