@@ -38,7 +38,6 @@
         };
 
         // --- КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Уникальный ID сессии для вкладки ---
-        // Используем sessionStorage для уникального ID в пределах вкладки.
         let localSessionId = sessionStorage.getItem('slax_session_id');
         if (!localSessionId) {
             localSessionId = crypto.randomUUID();
@@ -53,7 +52,7 @@
         let messagesUnsubscribe = null; 
         
         let localStream = null; 
-        let screenShareStream = null; 
+        // let screenShareStream = null; // УДАЛЕНО: демонстрация экрана
         let currentVoiceChannel = null;
 
         // WebRTC Состояние
@@ -62,7 +61,6 @@
         let signalUnsubscribes = {}; // { targetSessionId: unsubscribeFunction }
         let isMicMuted = false;
         
-        // --- НОВЫЙ СТАТУС: СОСТОЯНИЕ БОКОВОЙ ПАНЕЛИ ДЛЯ МОБИЛЬНЫХ УСТРОЙСТВ ---
         let isSidebarOpen = false;
 
         // --- DOM ЭЛЕМЕНТЫ ---
@@ -81,11 +79,10 @@
         const voiceStatusPanel = document.getElementById('voice-status-panel');
         const currentVoiceName = document.getElementById('current-voice-name');
         const micToggleButton = document.getElementById('mic-toggle-btn');
-        const screenShareButton = document.getElementById('screen-share-btn');
-        const mainContentArea = document.getElementById('main-content-area'); 
+        // const screenShareButton = document.getElementById('screen-share-btn'); // УДАЛЕНО
         const notificationArea = document.getElementById('notification-area'); 
-        const sidebar = document.getElementById('sidebar'); // Новый элемент
-        const sidebarBackdrop = document.getElementById('sidebar-backdrop'); // Новый элемент
+        const sidebar = document.getElementById('sidebar'); 
+        const sidebarBackdrop = document.getElementById('sidebar-backdrop'); 
 
         // --- ЛОГИКА АДАПТИВНОСТИ ---
         window.toggleSidebar = function() {
@@ -104,7 +101,6 @@
         // --- ЧАСТЬ 1: АВТОРИЗАЦИЯ ---
         async function initAuth() {
             try {
-                // Анонимный вход для получения UID (ключ к Firestore)
                 await signInAnonymously(auth);
             } catch (e) {
                 console.error("SLAX AUTH ERROR:", e);
@@ -116,7 +112,6 @@
         onAuthStateChanged(auth, (user) => {
             if (user) {
                 currentUser = user;
-                // Отображаем LocalSessionId вместо UID для отладки
                 displayUid.textContent = `SID: ${localSessionId.slice(0, 8).toUpperCase()}`; 
                 loginError.textContent = "СОЕДИНЕНИЕ УСТАНОВЛЕНО. ВВЕДИТЕ ДАННЫЕ.";
             }
@@ -240,7 +235,7 @@
             displayUsername.textContent = currentUsername;
             loginScreen.classList.add('hidden');
             mainInterface.classList.remove('hidden');
-            subscribeToMessages();
+            switchChannel(currentChannel); // Инициировать подписку на сообщения и обновить UI
             messageInput.focus();
             playTone(800, 0.1); 
         }
@@ -258,7 +253,6 @@
             playTone(1200, 0.05);
             subscribeToMessages();
             
-            // Закрываем боковую панель после выбора канала на мобильных устройствах
             if (isSidebarOpen && window.innerWidth < 768) {
                 toggleSidebar();
             }
@@ -267,7 +261,6 @@
         function subscribeToMessages() {
             if (messagesUnsubscribe) messagesUnsubscribe();
 
-            // Очищаем только сообщения, а не системные уведомления
             const q = collection(db, 'artifacts', appId, 'public', 'data', 'messages');
 
             messagesUnsubscribe = onSnapshot(q, (snapshot) => {
@@ -292,7 +285,6 @@
         }
 
         function renderMessages(messages) {
-            // Очищаем только динамически добавленные сообщения
             const staticMessages = Array.from(chatContainer.querySelectorAll('.system-msg'));
             chatContainer.innerHTML = '';
             staticMessages.forEach(msg => chatContainer.appendChild(msg));
@@ -316,29 +308,20 @@
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
 
-        /**
-         * Добавляет временное системное уведомление.
-         * @param {string} text - Текст уведомления.
-         * @param {boolean} [isError=false] - Если true, использует красный цвет.
-         */
         function addSystemMessage(text, isError = false) {
             const notification = document.createElement('div');
             notification.className = `notification-item text-sm border-l-4 pl-2 ${isError ? 'text-red-300 border-red-500' : 'text-green-300 border-green-500'}`;
             notification.textContent = `>> СИСТЕМА: ${text}`;
             
-            // Добавляем уведомление
             notificationArea.appendChild(notification);
 
-            // Таймер на удаление
             setTimeout(() => {
-                // Запускаем анимацию исчезновения
                 notification.classList.add('fade-out');
                 
-                // Удаляем элемент после завершения анимации
                 setTimeout(() => {
                     notification.remove();
-                }, 200); // Соответствует времени transition в CSS
-            }, 2500); // Уведомление висит 2.5 секунды
+                }, 200); 
+            }, 2500); 
         }
 
 
@@ -371,9 +354,8 @@
         });
 
 
-        // --- ЧАСТЬ 3: WEB-RTC / ГОЛОСОВОЙ ЧАТ / СИГНАЛИЗАЦИЯ (Исправленная логика leaveVoice) ---
+        // --- ЧАСТЬ 3: WEB-RTC / ГОЛОСОВОЙ ЧАТ (ТОЛЬКО АУДИО) ---
 
-        // Теперь используем localSessionId в качестве ID документа в FireStore
         const voiceRef = (channel) => collection(db, 'artifacts', appId, 'public', 'data', 'voice_sessions', channel, 'users');
         const userSignalRef = (sessionId) => doc(db, 'artifacts', appId, 'public', 'data', 'voice_signals', sessionId);
 
@@ -383,7 +365,6 @@
             } else {
                 joinVoice(voiceId);
             }
-            // Закрываем боковую панель после выбора канала на мобильных устройствах
             if (isSidebarOpen && window.innerWidth < 768) {
                 toggleSidebar();
             }
@@ -399,23 +380,17 @@
 
             addSystemMessage(`ЗАХВАТ МИКРОФОНА...`);
             try {
+                // Захватываем ТОЛЬКО аудио
                 localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
-                document.getElementById('local-video').srcObject = localStream;
                 micToggleButton.textContent = '🎤 MIC: ON';
                 isMicMuted = false;
 
-                // Добавляем все треки экрана (если уже активна) в localStream
-                if (screenShareStream) {
-                    screenShareStream.getTracks().forEach(track => localStream.addTrack(track));
-                }
-
-                // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Используем localSessionId для записи в БД
                 await setDoc(doc(voiceRef(voiceId), localSessionId), {
                     username: currentUsername,
-                    sessionId: localSessionId, // Добавляем sessionId
+                    sessionId: localSessionId,
                     uid: currentUser.uid, 
                     joinedAt: serverTimestamp(),
-                    isScreenSharing: !!screenShareStream,
+                    // isScreenSharing: !!screenShareStream, // УДАЛЕНО
                     isMicMuted: false
                 });
 
@@ -433,7 +408,6 @@
             }
         }
         
-        // КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Гарантированная остановка и очистка сессии
         window.leaveVoice = async function() {
             if (!currentVoiceChannel) {
                 addSystemMessage(`ОШИБКА: ВЫ НЕ ПОДКЛЮЧЕНЫ К ГОЛОСОВОМУ КАНАЛУ.`, true);
@@ -442,23 +416,17 @@
 
             const channelToLeave = currentVoiceChannel; 
             
-            // 1. ОСТАНОВКА ЛОКАЛЬНЫХ ПОТОКОВ
+            // 1. ОСТАНОВКА ЛОКАЛЬНОГО АУДИО ПОТОКА
             if (localStream) {
                 localStream.getTracks().forEach(track => track.stop());
                 localStream = null;
             }
-            if (screenShareStream) {
-                screenShareStream.getTracks().forEach(track => track.stop());
-                screenShareStream = null;
-                screenShareButton.textContent = '🖥️ DEMO SCREEN';
-            }
 
-            // 2. ЗАКРЫТИЕ PEER CONNECTIONS
+            // 2. ЗАКРЫТИЕ PEER CONNECTIONS И УДАЛЕНИЕ АУДИО ЭЛЕМЕНТОВ
             Object.keys(peerConnections).forEach(sessionId => {
                 const pc = peerConnections[sessionId];
                 if (pc) pc.close();
-                removeRemoteVideo(sessionId, 'audio');
-                removeRemoteVideo(sessionId, 'screen');
+                removeRemoteAudio(sessionId); // Используем новую функцию
                 delete peerConnections[sessionId];
             });
 
@@ -467,25 +435,16 @@
                 voiceSessionUnsubscribe();
                 voiceSessionUnsubscribe = null;
             }
-            if (signalUnsubscribes['local']) {
-                 signalUnsubscribes['local']();
-                 delete signalUnsubscribes['local'];
-            }
             
-            // Удаляем все индивидуальные подписки (если они были)
             for (const key in signalUnsubscribes) {
                 if(signalUnsubscribes[key]) signalUnsubscribes[key]();
                 delete signalUnsubscribes[key];
             }
-            
             signalUnsubscribes = {}; 
 
             // 4. УДАЛЕНИЕ СЕССИИ ИЗ FIRESTORE
             if (channelToLeave) {
-                 // Очищаем локальные сигналы
                 await setDoc(userSignalRef(localSessionId), { cleanup: true, timestamp: serverTimestamp() }).catch(e => console.warn("Не удалось очистить сигналы:", e));
-                
-                // Удаляем сессию
                 await deleteDoc(doc(voiceRef(channelToLeave), localSessionId)).catch(e => {
                     console.warn("Не удалось удалить сессию (может быть уже удалена):", e);
                 });
@@ -498,17 +457,11 @@
             playTone(300, 0.2);
         }
         
-        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Очистка при закрытии вкладки
         window.addEventListener('beforeunload', async () => {
             if (currentVoiceChannel) {
-                // Пытаемся синхронно удалить запись из БД
-                // Используем navigator.sendBeacon или простую синхронную выборку, 
-                // так как async/await в beforeunload работает ненадежно.
                 const voiceSessionDocRef = doc(voiceRef(currentVoiceChannel), localSessionId);
-                // Отправляем запрос на удаление без ожидания ответа
-                // В реальном приложении лучше использовать sendBeacon
-                // Но для простоты используем fetch, надеясь, что он сработает.
                 try {
+                     // Используем keepalive, чтобы браузер успел отправить запрос
                      fetch(voiceSessionDocRef.path, { method: 'DELETE', keepalive: true });
                 } catch(e) { /* Игнорируем ошибки */ }
             }
@@ -528,20 +481,13 @@
                 
                 snapshot.forEach(doc => {
                     const userData = doc.data();
-                    // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Сравниваем по sessionId
                     if (userData.sessionId !== localSessionId) { 
-                        users.push(userData.username);
+                        users.push({ username: userData.username, sessionId: userData.sessionId });
                         activePeers.add(userData.sessionId);
                         
                         if (!currentPeers.has(userData.sessionId)) {
                             createPeerConnection(userData.sessionId, true); 
-                        }
-                        
-                        // Удаленный пользователь может изменить статус screen sharing
-                        if (userData.isScreenSharing) {
-                            ensureRemoteVideo(userData.sessionId, userData.username, 'screen');
-                        } else {
-                            removeRemoteVideo(userData.sessionId, 'screen');
+                            addSystemMessage(`ПОЛЬЗОВАТЕЛЬ ${userData.username} ПРИСОЕДИНИЛСЯ.`);
                         }
                     }
                 });
@@ -556,24 +502,22 @@
                         delete peerConnections[sessionId];
                         if (signalUnsubscribes[sessionId]) signalUnsubscribes[sessionId]();
                         delete signalUnsubscribes[sessionId];
-                        removeRemoteVideo(sessionId, 'audio');
-                        removeRemoteVideo(sessionId, 'screen');
+                        removeRemoteAudio(sessionId); // Удаляем аудио элемент
                         addSystemMessage(`ПОЛЬЗОВАТЕЛЬ ${sessionId.slice(0, 8).toUpperCase()} ВЫШЕЛ.`);
                     }
                 });
                 
-                const usersHtml = users.map(u => `<div class="text-green-300">> ${u}</div>`).join('');
+                const usersHtml = users.map(u => `<div class="text-green-300" data-session-id="${u.sessionId}">>> ${u.username}</div>`).join('');
                 const voiceLi = document.querySelector(`li[data-voice="${voiceId}"]`);
                 if (voiceLi) {
                     voiceLi.querySelector('.voice-users').innerHTML = usersHtml;
-                    voiceLi.querySelector('.voice-count').textContent = users.length + 1; // +1 для текущего пользователя
+                    voiceLi.querySelector('.voice-count').textContent = users.length + 1; 
                 }
                 
             }, (err) => console.error("Ошибка подписки на сессию:", err));
         }
 
         function subscribeToSignaling() {
-            // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Слушаем свой localSessionId
             const q = userSignalRef(localSessionId);
             
             if (signalUnsubscribes['local']) signalUnsubscribes['local']();
@@ -602,28 +546,22 @@
             peerConnections[targetSessionId] = pc;
             
             if (localStream) {
+                // Добавляем все аудио треки (только аудио)
                 localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
             }
             
-            // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Обработка треков
+            // КЛЮЧЕВОЙ ФИКС: Обработка входящего потока (только аудио)
             pc.ontrack = (event) => {
                 const stream = event.streams[0];
                 const track = event.track;
-                const streamType = track.kind === 'video' ? 'screen' : 'audio';
 
-                // Находим имя пользователя по sessionId из списка текущих участников
-                const voiceLi = document.querySelector(`li[data-voice="${currentVoiceChannel}"]`);
-                const usernameElement = voiceLi ? voiceLi.querySelector(`.voice-users div[data-session-id="${targetSessionId}"]`) : null;
-                const targetUsername = usernameElement ? usernameElement.textContent.replace('> ', '').trim() : targetSessionId.slice(0, 8).toUpperCase(); 
-
-                // Проверяем, есть ли трек в потоке (чтобы не добавлять его несколько раз)
-                const existingVideo = document.getElementById(`${targetSessionId}-screen`);
-                const existingAudio = document.getElementById(`${targetSessionId}-audio`);
-
-                if (streamType === 'audio' && !existingAudio) {
-                    ensureRemoteVideo(targetSessionId, targetUsername, 'audio', stream); 
-                } else if (streamType === 'screen' && !existingVideo) {
-                    ensureRemoteVideo(targetSessionId, targetUsername, 'screen', stream);
+                if (track.kind === 'audio') {
+                    // Находим имя пользователя (для системного сообщения)
+                    const voiceLi = document.querySelector(`li[data-voice="${currentVoiceChannel}"]`);
+                    const userDiv = voiceLi ? voiceLi.querySelector(`.voice-users div[data-session-id="${targetSessionId}"]`) : null;
+                    const targetUsername = userDiv ? userDiv.textContent.replace('>> ', '').trim() : targetSessionId.slice(0, 8).toUpperCase(); 
+                    
+                    ensureRemoteAudio(targetSessionId, targetUsername, stream);
                 }
             };
             
@@ -667,12 +605,9 @@
             pc.ontrack = (event) => {
                 const stream = event.streams[0];
                 const track = event.track;
-                const streamType = track.kind === 'video' ? 'screen' : 'audio';
 
-                if (streamType === 'audio') {
-                    ensureRemoteVideo(senderSessionId, senderUsername, 'audio', stream);
-                } else if (streamType === 'screen') {
-                    ensureRemoteVideo(senderSessionId, senderUsername, 'screen', stream);
+                if (track.kind === 'audio') {
+                    ensureRemoteAudio(senderSessionId, senderUsername, stream);
                 }
             };
 
@@ -719,8 +654,14 @@
             }
         }
         
-        // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Отправка сигнала по sessionId
         async function sendSignal(signalData, targetSessionId) {
+            // ИСПРАВЛЕНИЕ: Добавляем проверку на валидность ID сессии, 
+            // чтобы избежать ошибок Firestore, если пир уже отключился.
+            if (!targetSessionId || typeof targetSessionId !== 'string') {
+                console.warn("Signal Warning: Invalid targetSessionId provided, skipping signal.", targetSessionId);
+                return;
+            }
+
             const recipientDoc = userSignalRef(targetSessionId);
             try {
                 await setDoc(recipientDoc, signalData, { merge: true });
@@ -729,7 +670,7 @@
             }
         }
 
-        // --- УПРАВЛЕНИЕ МИКРОФОНОМ И ЭКРАНОМ ---
+        // --- УПРАВЛЕНИЕ МИКРОФОНОМ ---
 
         window.toggleMic = function() {
             if (!localStream) return;
@@ -750,228 +691,50 @@
             }
         }
 
-        window.toggleScreenShare = async function() {
-            if (screenShareStream) {
-                // Если демонстрация активна, останавливаем
-                screenShareStream.getTracks().forEach(track => track.stop());
-                screenShareStream = null;
-                screenShareButton.textContent = '🖥️ DEMO SCREEN';
-                addSystemMessage('ДЕМОНСТРАЦИЯ ЭКРАНА ЗАВЕРШЕНА.');
-                
-                // Переключение обратно на аудио трек для всех PeerConnections
-                if (localStream) {
-                    const audioTrack = localStream.getAudioTracks()[0];
-                    if (audioTrack) {
-                         Object.values(peerConnections).forEach(pc => {
-                            const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
-                            if (sender) {
-                                sender.replaceTrack(audioTrack);
-                            }
-                         });
-                    }
-                }
-            } else {
-                // Иначе, запускаем демонстрацию
-                try {
-                    screenShareStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-                    screenShareButton.textContent = '🖥️ DEMO: ACTIVE';
-                    addSystemMessage('НАЧАТА ДЕМОНСТРАЦИЯ ЭКРАНА.');
-                    
-                    const videoTrack = screenShareStream.getVideoTracks()[0];
-                    const audioTrack = screenShareStream.getAudioTracks()[0];
+        // --- ФУНКЦИИ УДАЛЕНЫ: toggleScreenShare, setupDragging ---
 
-                    Object.values(peerConnections).forEach(pc => {
-                        // Заменяем существующий видео-трек (если он был) на новый трек экрана
-                        let videoSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-                        if (videoSender) {
-                            videoSender.replaceTrack(videoTrack);
-                        } else {
-                            // Если нет, добавляем как новый трек
-                            pc.addTrack(videoTrack, screenShareStream);
-                        }
-                        
-                        // Если в потоке есть аудио, заменяем или добавляем его
-                        if (audioTrack) {
-                            let audioSender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
-                            if (audioSender) {
-                                audioSender.replaceTrack(audioTrack);
-                            } else {
-                                pc.addTrack(audioTrack, screenShareStream);
-                            }
-                        }
-                        // Необходимо повторно отправить offer/answer
-                        pc.createOffer().then(offer => pc.setLocalDescription(offer)).then(() => {
-                           // Сигнализация будет отправлена через onicecandidate, но для надежности
-                           // можно было бы инициировать ручной обмен, но оставим автоматику.
-                        });
-                    });
+        // --- УПРАВЛЕНИЕ УДАЛЕННЫМ АУДИО (ИСПРАВЛЕНИЕ) ---
 
-                    // Обработка завершения демонстрации (например, через кнопку в браузере)
-                    videoTrack.onended = () => {
-                        if (screenShareStream) toggleScreenShare();
-                    };
+        /**
+         * Обеспечивает наличие и привязку удаленного аудиопотока к скрытому элементу <audio>.
+         * @param {string} sessionId - ID удаленной сессии.
+         * @param {string} username - Имя пользователя.
+         * @param {MediaStream} stream - Входящий медиапоток (только аудио).
+         */
+        function ensureRemoteAudio(sessionId, username, stream) {
+            const id = `${sessionId}-audio`;
+            let audioElement = document.getElementById(id);
 
-                } catch (err) {
-                    console.error("Ошибка захвата экрана:", err);
-                    addSystemMessage("ОШИБКА: НЕ УДАЛОСЬ ЗАХВАТИТЬ ЭКРАН. ПРОВЕРЬТЕ РАЗРЕШЕНИЯ.", true);
-                    screenShareStream = null;
-                }
+            if (!audioElement) {
+                // Создаем скрытый элемент <audio> для воспроизведения звука
+                audioElement = document.createElement('audio'); 
+                audioElement.id = id;
+                audioElement.autoplay = true;
+                audioElement.style.display = 'none';
+                document.body.appendChild(audioElement);
+                addSystemMessage(`ПОЛУЧЕН АУДИО ПОТОК ОТ ${username}.`);
             }
-
-            if (currentVoiceChannel) {
-                updateDoc(doc(voiceRef(currentVoiceChannel), localSessionId), {
-                    isScreenSharing: !!screenShareStream
-                });
-            }
+            
+            // Привязываем поток к элементу. ЭТО КЛЮЧЕВОЙ ШАГ.
+            audioElement.srcObject = stream;
         }
 
-        // --- УПРАВЛЕНИЕ УДАЛЕННЫМ ВИДЕО (ДВИЖУЩЕЕСЯ ОКНО) ---
-
-        // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: uid заменен на sessionId
-        function ensureRemoteVideo(sessionId, username, streamType, stream = null) {
-            const isScreen = streamType === 'screen';
-            const id = `${sessionId}-${streamType}`;
-            let videoElement = document.getElementById(id);
-
-            if (isScreen) {
-                if (!videoElement) {
-                    const wrapper = document.createElement('div');
-                    wrapper.id = id;
-                    wrapper.className = 'draggable-window';
-                    wrapper.style.left = `${Math.random() * 50 + 10}vw`; 
-                    wrapper.style.top = `${Math.random() * 30 + 10}vh`;
-
-                    wrapper.innerHTML = `
-                        <div class="draggable-header" data-drag-id="${id}">
-                            <span>DEMO | ${username}</span>
-                            <span class="text-red-500 cursor-pointer" onclick="removeRemoteVideo('${sessionId}', 'screen')">[ X ]</span>
-                        </div>
-                        <video autoplay class="draggable-video"></video>
-                    `;
-                    mainContentArea.appendChild(wrapper);
-                    videoElement = wrapper.querySelector('video');
-                    setupDragging(wrapper);
-                    addSystemMessage(`ПОЛУЧЕН ПОТОК ЭКРАНА ОТ ${username}.`);
-                }
-
-                if (stream) {
-                    videoElement.srcObject = stream;
-                }
-            } else {
-                if (!videoElement && stream) {
-                    // Аудиопоток - невидимый элемент
-                    videoElement = document.createElement('audio'); 
-                    videoElement.id = id;
-                    videoElement.autoplay = true;
-                    videoElement.style.display = 'none';
-                    videoElement.srcObject = stream;
-                    document.body.appendChild(videoElement);
-                    addSystemMessage(`ПОЛУЧЕН АУДИО ПОТОК ОТ ${username}.`);
-                }
-                
-                if (videoElement && stream) {
-                    videoElement.srcObject = stream;
-                }
-            }
-        }
-
-        // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: uid заменен на sessionId
-        window.removeRemoteVideo = function(sessionId, streamType) {
-            const id = `${sessionId}-${streamType}`;
+        /**
+         * Удаляет скрытый элемент <audio> и останавливает его поток.
+         * @param {string} sessionId - ID удаленной сессии.
+         */
+        window.removeRemoteAudio = function(sessionId) {
+            const id = `${sessionId}-audio`;
             const element = document.getElementById(id);
             if (element) {
-                if (streamType === 'screen') {
-                    addSystemMessage(`ПОТОК ЭКРАНА ОТ ${sessionId.slice(0, 8).toUpperCase()} ПРЕРВАН.`);
-                } 
-                
                 const stream = element.srcObject;
                 if (stream) {
                     stream.getTracks().forEach(track => track.stop());
                 }
-
                 element.remove();
             }
         }
 
-        // --- ЛОГИКА ПЕРЕТАСКИВАНИЯ (DRAG-AND-DROP) ---
-        function setupDragging(element) {
-            const header = element.querySelector('.draggable-header');
-            let isDragging = false;
-            let currentX;
-            let currentY;
-            let initialX;
-            let initialY;
-            let xOffset = 0;
-            let yOffset = 0;
-
-            const style = window.getComputedStyle(element);
-            const matrix = new DOMMatrixReadOnly(style.transform);
-            xOffset = matrix.m41;
-            yOffset = matrix.m42;
-            
-            header.addEventListener('mousedown', dragStart);
-            document.addEventListener('mouseup', dragEnd);
-            document.addEventListener('mousemove', drag);
-            
-            header.addEventListener('touchstart', dragStart);
-            document.addEventListener('touchend', dragEnd);
-            document.addEventListener('touchmove', drag);
-
-            function dragStart(e) {
-                if (e.button !== 0 && e.type !== 'touchstart') return;
-                
-                let clientX = e.clientX || e.touches[0].clientX;
-                let clientY = e.clientY || e.touches[0].clientY;
-
-                initialX = clientX - xOffset;
-                initialY = clientY - yOffset;
-                
-                isDragging = true;
-                element.classList.add('opacity-75');
-                e.preventDefault();
-            }
-
-            function dragEnd(e) {
-                if (isDragging) {
-                    xOffset = currentX;
-                    yOffset = currentY;
-                }
-                isDragging = false;
-                element.classList.remove('opacity-75');
-            }
-
-            function drag(e) {
-                if (!isDragging) return;
-
-                let clientX = e.clientX || e.touches[0].clientX;
-                let clientY = e.clientY || e.touches[0].clientY;
-
-                currentX = clientX - initialX;
-                currentY = clientY - initialY;
-
-                const parentRect = mainContentArea.getBoundingClientRect();
-                const elementRect = element.getBoundingClientRect();
-
-                let newLeft = currentX;
-                let newTop = currentY;
-                
-                if (newLeft < 0) newLeft = 0;
-                if (newTop < 0) newTop = 0;
-
-                if (newLeft + elementRect.width > parentRect.width) {
-                    newLeft = parentRect.width - elementRect.width;
-                }
-                if (newTop + elementRect.height > parentRect.height) {
-                    newTop = parentRect.height - elementRect.height;
-                }
-                
-                currentX = newLeft;
-                currentY = newTop;
-                
-                element.style.transform = `translate3d(${currentX}px, ${currentY}px, 0)`;
-            }
-        }
-        
         // --- UTILS (Звук) ---
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         const ctx = new AudioContext();
@@ -1007,7 +770,6 @@
             font-family: 'VT323', monospace;
             overflow: hidden;
             text-shadow: 0 0 3px var(--terminal-glow);
-            /* Базовый размер шрифта для мобильных, увеличиваем на md */
             font-size: 1.1rem; 
         }
 
@@ -1064,11 +826,9 @@
             width: 100%;
         }
 
-        /* Стиль для сообщений в чате */
         .system-msg { color: #88aa88; font-style: italic; font-size: 0.9em; }
         .timestamp { opacity: 0.5; margin-right: 10px; font-size: 0.8em; }
         
-        /* Стиль для временных уведомлений */
         #notification-area {
             position: absolute;
             bottom: 6rem; /* Над полем ввода */
@@ -1101,39 +861,9 @@
             50% { content: 'MOUNTING_DRIVES...'; }
             75% { content: 'ESTABLISHING_UPLINK...'; }
         }
-
-        /* Стиль для перемещаемого окна (Screen Share) */
-        .draggable-window {
-            position: absolute;
-            width: 300px;
-            height: 200px;
-            min-width: 150px;
-            min-height: 100px;
-            resize: both;
-            overflow: hidden;
-            border: 2px solid var(--terminal-green);
-            background-color: var(--terminal-bg);
-            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
-            z-index: 1000;
-        }
-        .draggable-header {
-            cursor: move;
-            background-color: #003300;
-            padding: 4px;
-            font-size: 0.8rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .draggable-video {
-            width: 100%;
-            height: calc(100% - 24px); 
-            display: block;
-            object-fit: contain;
-            background: black;
-        }
         
-        /* Мобильные стили для Sidebar */
+        /* УДАЛЕНО: .draggable-window и связанные стили */
+        
         #sidebar {
             transition: transform 0.3s ease-in-out;
         }
@@ -1190,8 +920,6 @@
         <div id="sidebar-backdrop" onclick="toggleSidebar()" class="hidden md:hidden absolute inset-0 bg-black/50 z-20"></div>
 
         <!-- SIDEBAR -->
-        <!-- На мобильных: фиксированная ширина, абсолютно позиционирован, изначально скрыт (-translate-x-full) -->
-        <!-- На десктопе (md): относительное позиционирование, постоянно видим -->
         <div id="sidebar" class="fixed w-64 md:w-72 h-full z-30 
                                   border-r-2 border-green-900 flex flex-col bg-black/95 
                                   -translate-x-full md:translate-x-0 transition-transform duration-300">
@@ -1231,23 +959,18 @@
                         <div class="text-[10px] uppercase tracking-widest mb-1 opacity-70">Текущая Частота</div>
                         <div id="current-voice-name" class="font-bold text-lg mb-2"></div>
                         
-                        <!-- Микрофон и Демонстрация Экрана -->
+                        <!-- Микрофон -->
                         <div class="flex space-x-2 mb-3">
                             <button id="mic-toggle-btn" onclick="toggleMic()" class="flex-1 bg-green-900/20 border border-green-800 text-green-400 hover:bg-green-800 hover:text-white transition-colors py-1 text-xs sm:text-sm uppercase">
                                 🎤 MIC: ON
                             </button>
-                            <button id="screen-share-btn" onclick="toggleScreenShare()" class="flex-1 bg-blue-900/20 border border-blue-800 text-blue-400 hover:bg-blue-800 hover:text-white transition-colors py-1 text-xs sm:text-sm uppercase">
-                                🖥️ DEMO SCREEN
-                            </button>
+                            <!-- УДАЛЕНА: кнопка демонстрации экрана -->
                         </div>
 
                         <button onclick="leaveVoice()" class="w-full bg-red-900/20 border border-red-800 text-red-500 hover:bg-red-900 hover:text-white transition-colors py-1 text-sm uppercase">
                             [ ОТКЛЮЧИТЬ ]
                         </button>
                     </div>
-                    
-                    <!-- Локальный видеопоток (для самоконтроля, скрыт) -->
-                    <video id="local-video" muted style="display:none;"></video>
                 </div>
             </div>
 
