@@ -356,7 +356,7 @@
 
         const voiceRef = (channel) => collection(db, 'artifacts', appId, 'public', 'data', 'voice_sessions', channel, 'users');
         
-        // --- КЛЮЧЕВОЙ ФИКС: Используем подколлекцию для входящих сигналов (чтобы избежать перезаписи) ---
+        // --- КЛЮЧЕВОЕ: Используем подколлекцию для входящих сигналов (уникальный документ на каждый сигнал) ---
         const signalingCollectionRef = (sessionId) => collection(db, 'artifacts', appId, 'public', 'data', 'voice_signals', sessionId, 'incoming_signals'); 
 
         window.handleVoiceAction = function(voiceId) {
@@ -426,7 +426,7 @@
             Object.keys(peerConnections).forEach(sessionId => {
                 const pc = peerConnections[sessionId];
                 if (pc) pc.close();
-                removeRemoteAudio(sessionId); // Используем новую функцию
+                removeRemoteAudio(sessionId); // Удаляем аудио элемент
                 delete peerConnections[sessionId];
             });
 
@@ -444,11 +444,9 @@
 
             // 4. УДАЛЕНИЕ СЕССИИ ИЗ FIRESTORE
             if (channelToLeave) {
-                // Удаляем запись о присутствии в канале
                 await deleteDoc(doc(voiceRef(channelToLeave), localSessionId)).catch(e => {
                     console.warn("Не удалось удалить сессию (может быть уже удалена):", e);
                 });
-                // Входящие сигналы будут удалены автоматически благодаря onSnapshot.
             }
 
             // 5. ОЧИСТКА СОСТОЯНИЯ UI
@@ -486,8 +484,10 @@
                         users.push({ username: userData.username, sessionId: userData.sessionId });
                         activePeers.add(userData.sessionId);
                         
-                        if (!currentPeers.has(userData.sessionId)) {
-                            // Initiator is the one with the lexicographically smaller session ID
+                        const pc = peerConnections[userData.sessionId];
+
+                        // КРИТИЧЕСКАЯ ПРОВЕРКА: Если нет PC или он закрыт/провалился
+                        if (!pc || pc.connectionState === 'closed' || pc.connectionState === 'failed') {
                             const isInitiator = localSessionId < userData.sessionId;
                             createPeerConnection(userData.sessionId, isInitiator); 
                             addSystemMessage(`ПОЛЬЗОВАТЕЛЬ ${userData.username} ПРИСОЕДИНИЛСЯ. (Initiator: ${isInitiator ? 'Yes' : 'No'})`);
@@ -520,7 +520,7 @@
             }, (err) => console.error("Ошибка подписки на сессию:", err));
         }
         
-        // --- КЛЮЧЕВАЯ ФУНКЦИЯ ДЛЯ ОБРАБОТКИ СИГНАЛОВ ---
+        // --- ФИКС СПАМА: Подписка на коллекцию сигналов (читаем и удаляем) ---
         function subscribeToSignaling() {
             // Подписываемся на подколлекцию входящих сигналов для нашей сессии
             const q = signalingCollectionRef(localSessionId);
@@ -542,11 +542,11 @@
                     }
 
                     if (data.offer) {
-                        addSystemMessage(`ПРИНЯТО ПРЕДЛОЖЕНИЕ ОТ ${data.senderUsername}`);
+                        addSystemMessage(`ПРИНЯТО ПРЕДЛОЖЕНИЕ ОТ ${data.senderUsername} - ОБРАБОТКА...`);
                         await handleOffer(data.senderSessionId, data.offer, data.senderUsername);
                         
                     } else if (data.answer) {
-                        addSystemMessage(`ПРИНЯТ ОТВЕТ ОТ ${data.senderUsername}`);
+                        addSystemMessage(`ПРИНЯТ ОТВЕТ ОТ ${data.senderUsername} - ОБРАБОТКА...`);
                         await handleAnswer(data.senderSessionId, data.answer);
                         
                     } else if (data.candidate) {
@@ -557,7 +557,7 @@
                     try {
                         await deleteDoc(signalDoc.ref);
                     } catch (e) {
-                        console.error("Ошибка удаления обработанного сигнала:", e);
+                        console.error("Ошибка удаления обработанного сигнала (возможно, уже удален):", e);
                     }
                 });
             }, (err) => console.error("Ошибка подписки на сигналы:", err));
@@ -567,18 +567,18 @@
             const pc = new RTCPeerConnection(iceServers);
             peerConnections[targetSessionId] = pc;
             
+            // --- ДОБАВЛЕНИЕ ТРЕКОВ ---
             if (localStream) {
-                // Добавляем все аудио треки (только аудио)
                 localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
             }
             
-            // КЛЮЧЕВОЙ ФИКС: Обработка входящего потока (только аудио)
+            // --- ОБРАБОТКА ВХОДЯЩЕГО ПОТОКА ---
             pc.ontrack = (event) => {
                 const stream = event.streams[0];
                 const track = event.track;
 
                 if (track.kind === 'audio') {
-                    // Находим имя пользователя (для системного сообщения)
+                    // Находим имя пользователя
                     const voiceLi = document.querySelector(`li[data-voice="${currentVoiceChannel}"]`);
                     const userDiv = voiceLi ? voiceLi.querySelector(`.voice-users div[data-session-id="${targetSessionId}"]`) : null;
                     const targetUsername = userDiv ? userDiv.textContent.replace('>> ', '').trim() : targetSessionId.slice(0, 8).toUpperCase(); 
@@ -587,6 +587,7 @@
                 }
             };
             
+            // --- ОБРАБОТКА ICE-КАНДИДАТОВ ---
             pc.onicecandidate = async (event) => {
                 if (event.candidate) {
                     await sendSignal({
@@ -598,89 +599,115 @@
                 }
             };
 
+            // --- ОБРАБОТКА СОСТОЯНИЙ (ДЛЯ ДЕБАГА) ---
+            pc.oniceconnectionstatechange = () => {
+                console.log(`ICE State for ${targetSessionId.slice(0, 4)}: ${pc.iceConnectionState}`);
+            };
+            pc.onsignalingstatechange = () => {
+                console.log(`Signaling State for ${targetSessionId.slice(0, 4)}: ${pc.signalingState}`);
+            };
+
+
+            // --- ИНИЦИИРОВАНИЕ СОЕДИНЕНИЯ (OFFER) ---
             if (isInitiator) {
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-                await sendSignal({
-                    offer: pc.localDescription.toJSON(),
-                    senderSessionId: localSessionId,
-                    senderUsername: currentUsername,
-                    type: 'offer'
-                }, targetSessionId);
+                try {
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    await sendSignal({
+                        offer: pc.localDescription.toJSON(),
+                        senderSessionId: localSessionId,
+                        senderUsername: currentUsername,
+                        type: 'offer'
+                    }, targetSessionId);
+                } catch (e) {
+                    console.error("Ошибка создания/отправки OFFER:", e);
+                }
             }
         }
 
+        // --- КЛЮЧЕВОЙ ФИКС ДЛЯ СТАБИЛЬНОСТИ ---
         async function handleOffer(senderSessionId, offer, senderUsername) {
-            if (peerConnections[senderSessionId]) {
-                // Если соединение уже есть, закроем его, чтобы избежать конфликтов при повторном оффере.
-                peerConnections[senderSessionId].close();
+            let pc = peerConnections[senderSessionId];
+            
+            // Если соединение еще не создано (что маловероятно, но возможно), создаем его
+            if (!pc) {
+                addSystemMessage(`ОШИБКА: OFFER БЕЗ PC. ПЕРЕ-ИНИЦИАЛИЗАЦИЯ.`, true);
+                // Создаем PC (Responder не должен быть Initiator, поэтому false)
+                createPeerConnection(senderSessionId, false);
+                pc = peerConnections[senderSessionId];
             }
-            
-            const pc = new RTCPeerConnection(iceServers);
-            peerConnections[senderSessionId] = pc;
-            
-            if (localStream) {
-                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+            if (!pc) return; // На всякий случай
+
+            // КРИТИЧЕСКАЯ ПРОВЕРКА: Если сигнальное состояние позволяет
+            try {
+                if (pc.signalingState !== 'stable') {
+                    // Это может быть повторный offer или конфликт. Игнорируем или ждем.
+                    // Для простоты, если состояние не stable, мы сначала завершаем ожидающую операцию.
+                    // В реальном мире тут нужна более сложная логика роллбэка, но для WebRTC Simple-Turnaround это сработает.
+                    // Если мы уже получили offer, но не успели ответить:
+                    if (pc.signalingState === 'have-local-pranswer' || pc.signalingState === 'have-remote-offer') {
+                         console.warn("Получен OFFER в нестабильном состоянии. Попытка роллбэка.");
+                         // await pc.setLocalDescription({type: "rollback"}); // rollback - не везде поддерживается
+                         // ВМЕСТО роллбэка - просто пропускаем, чтобы не спамить.
+                         return;
+                    }
+                }
+                
+                await pc.setRemoteDescription(new RTCSessionDescription(offer));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                
+                await sendSignal({
+                    answer: pc.localDescription.toJSON(),
+                    senderSessionId: localSessionId,
+                    senderUsername: currentUsername,
+                    type: 'answer'
+                }, senderSessionId);
+            } catch (e) {
+                console.error("КРИТИЧЕСКАЯ ОШИБКА ОБРАБОТКИ OFFER:", e);
+                addSystemMessage(`ОШИБКА: СБОЙ ОБРАБОТКИ ПРЕДЛОЖЕНИЯ ОТ ${senderUsername}.`, true);
             }
-            
-            pc.ontrack = (event) => {
-                const stream = event.streams[0];
-                const track = event.track;
-
-                if (track.kind === 'audio') {
-                    ensureRemoteAudio(senderSessionId, senderUsername, stream);
-                }
-            };
-
-            pc.onicecandidate = async (event) => {
-                if (event.candidate) {
-                    await sendSignal({
-                        candidate: event.candidate.toJSON(),
-                        senderSessionId: localSessionId,
-                        senderUsername: currentUsername,
-                        type: 'candidate'
-                    }, senderSessionId);
-                }
-            };
-
-            await pc.setRemoteDescription(new RTCSessionDescription(offer));
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            
-            await sendSignal({
-                answer: pc.localDescription.toJSON(),
-                senderSessionId: localSessionId,
-                senderUsername: currentUsername,
-                type: 'answer'
-            }, senderSessionId);
         }
 
         async function handleAnswer(senderSessionId, answer) {
             const pc = peerConnections[senderSessionId];
-            if (pc && pc.signalingState !== 'stable') {
-                await pc.setRemoteDescription(new RTCSessionDescription(answer));
+            if (!pc) {
+                console.warn(`Получен ANSWER, но PC для ${senderSessionId} не найден.`);
+                return;
+            }
+            
+            // КРИТИЧЕСКАЯ ПРОВЕРКА: принимаем ответ, только если мы ждем его (т.е. у нас есть локальный offer)
+            if (pc.signalingState === 'have-local-offer') {
+                try {
+                    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+                } catch (e) {
+                    console.error("КРИТИЧЕСКАЯ ОШИБКА ОБРАБОТКИ ANSWER:", e);
+                    addSystemMessage(`ОШИБКА: СБОЙ ОБРАБОТКИ ОТВЕТА.`, true);
+                }
+            } else {
+                console.warn(`Получен ANSWER в неожиданном состоянии: ${pc.signalingState}. Игнорируем.`);
             }
         }
 
         async function handleCandidate(senderSessionId, candidate) {
             const pc = peerConnections[senderSessionId];
-            if (pc) {
+            if (pc && pc.remoteDescription) {
                 try {
                     await pc.addIceCandidate(new RTCIceCandidate(candidate));
                 } catch (e) {
-                    console.error('Ошибка добавления ICE-кандидата:', e);
+                    // Это нормально, если кандидат пришел после закрытия соединения или в неподходящий момент
+                    console.error('Ошибка добавления ICE-кандидата (игнорируется):', e);
                 }
             }
         }
         
         async function sendSignal(signalData, targetSessionId) {
-            // Добавляем проверку на валидность ID сессии
             if (!targetSessionId || typeof targetSessionId !== 'string') {
                 console.warn("Signal Warning: Invalid targetSessionId provided, skipping signal.", targetSessionId);
                 return;
             }
 
-            // Получаем ссылку на КОЛЛЕКЦИЮ входящих сигналов целевой сессии
             const recipientCollection = signalingCollectionRef(targetSessionId); 
             try {
                 // Используем addDoc, чтобы создать УНИКАЛЬНЫЙ документ для сигнала
@@ -715,16 +742,12 @@
 
         /**
          * Обеспечивает наличие и привязку удаленного аудиопотока к скрытому элементу <audio>.
-         * @param {string} sessionId - ID удаленной сессии.
-         * @param {string} username - Имя пользователя.
-         * @param {MediaStream} stream - Входящий медиапоток (только аудио).
          */
         function ensureRemoteAudio(sessionId, username, stream) {
             const id = `${sessionId}-audio`;
             let audioElement = document.getElementById(id);
 
             if (!audioElement) {
-                // Создаем скрытый элемент <audio> для воспроизведения звука
                 audioElement = document.createElement('audio'); 
                 audioElement.id = id;
                 audioElement.autoplay = true;
@@ -733,13 +756,12 @@
                 addSystemMessage(`ПОЛУЧЕН АУДИО ПОТОК ОТ ${username}.`);
             }
             
-            // Привязываем поток к элементу. ЭТО КЛЮЧЕВОЙ ШАГ.
+            // Ключевой шаг: привязываем поток к элементу.
             audioElement.srcObject = stream;
         }
 
         /**
          * Удаляет скрытый элемент <audio> и останавливает его поток.
-         * @param {string} sessionId - ID удаленной сессии.
          */
         window.removeRemoteAudio = function(sessionId) {
             const id = `${sessionId}-audio`;
