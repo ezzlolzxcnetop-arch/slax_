@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SLAX_TERMINAL_V3</title>
+    <title>SLAX_TERMINAL_V5</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
     
@@ -51,7 +51,11 @@
         let currentChannel = "main";
         let messagesUnsubscribe = null; 
         
-        let localStream = null; 
+        let localStream = null;         // Поток для микрофона
+        let screenStream = null;        // Поток для экрана
+        let isSharingScreen = false;
+        let screenSenders = {};         // { targetSessionId: RTCRtpSender для видео-трека экрана }
+
         let currentVoiceChannel = null;
 
         // WebRTC Состояние
@@ -78,9 +82,12 @@
         const voiceStatusPanel = document.getElementById('voice-status-panel');
         const currentVoiceName = document.getElementById('current-voice-name');
         const micToggleButton = document.getElementById('mic-toggle-btn');
+        const screenToggleButton = document.getElementById('screen-toggle-btn');
         const notificationArea = document.getElementById('notification-area'); 
         const sidebar = document.getElementById('sidebar'); 
         const sidebarBackdrop = document.getElementById('sidebar-backdrop'); 
+        const floatingVideosContainer = document.getElementById('floating-videos-container');
+
 
         // --- ЛОГИКА АДАПТИВНОСТИ ---
         window.toggleSidebar = function() {
@@ -352,7 +359,7 @@
         });
 
 
-        // --- ЧАСТЬ 3: WEB-RTC / ГОЛОСОВОЙ ЧАТ (ТОЛЬКО АУДИО) ---
+        // --- ЧАСТЬ 3: WEB-RTC / ГОЛОСОВОЙ ЧАТ И ЭКРАН ---
 
         const voiceRef = (channel) => collection(db, 'artifacts', appId, 'public', 'data', 'voice_sessions', channel, 'users');
         
@@ -384,7 +391,7 @@
                 localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
                 micToggleButton.textContent = '🎤 MIC: ON';
                 isMicMuted = false;
-
+                
                 // Добавляем запись о нашем присутствии
                 await setDoc(doc(voiceRef(voiceId), localSessionId), {
                     username: currentUsername,
@@ -413,6 +420,11 @@
                 addSystemMessage(`ОШИБКА: ВЫ НЕ ПОДКЛЮЧЕНЫ К ГОЛОСОВОМУ КАНАЛУ.`, true);
                 return;
             }
+            
+            // Если демонстрируем экран, сначала останавливаем
+            if (isSharingScreen) {
+                await stopScreenShare();
+            }
 
             const channelToLeave = currentVoiceChannel; 
             
@@ -422,12 +434,13 @@
                 localStream = null;
             }
 
-            // 2. ЗАКРЫТИЕ PEER CONNECTIONS И УДАЛЕНИЕ АУДИО ЭЛЕМЕНТОВ
+            // 2. ЗАКРЫТИЕ PEER CONNECTIONS И УДАЛЕНИЕ АУДИО/ВИДЕО ЭЛЕМЕНТОВ
             Object.keys(peerConnections).forEach(sessionId => {
                 const pc = peerConnections[sessionId];
                 if (pc) pc.close();
-                removeRemoteAudio(sessionId); // Удаляем аудио элемент
+                removeMediaWindow(sessionId, true); // Удаляем аудио и видео элементы
                 delete peerConnections[sessionId];
+                delete screenSenders[sessionId];
             });
 
             // 3. ОТПИСКА ОТ ВСЕХ LISTENER'ОВ
@@ -503,9 +516,10 @@
                             pc.close();
                         }
                         delete peerConnections[sessionId];
+                        delete screenSenders[sessionId]; // Удаляем отправителя для этого пира
                         if (signalUnsubscribes[sessionId]) signalUnsubscribes[sessionId]();
                         delete signalUnsubscribes[sessionId];
-                        removeRemoteAudio(sessionId); // Удаляем аудио элемент
+                        removeMediaWindow(sessionId, true); // Удаляем аудио/видео элемент
                         addSystemMessage(`ПОЛЬЗОВАТЕЛЬ ${sessionId.slice(0, 8).toUpperCase()} ВЫШЕЛ.`);
                     }
                 });
@@ -527,7 +541,7 @@
             
             if (signalUnsubscribes['local']) signalUnsubscribes['local']();
 
-            signalUnsubscribes['local'] = onSnapshot(q, async (snapshot) => {
+            signalUnsubscribes['local'] = onSnapshot(q, (snapshot) => {
                 snapshot.docChanges().forEach(async (change) => {
                     // Обрабатываем только вновь добавленные сигналы
                     if (change.type !== 'added') return; 
@@ -567,9 +581,19 @@
             const pc = new RTCPeerConnection(iceServers);
             peerConnections[targetSessionId] = pc;
             
-            // --- ДОБАВЛЕНИЕ ТРЕКОВ ---
+            // --- ДОБАВЛЕНИЕ ТРЕКОВ МИКРОФОНА ---
             if (localStream) {
                 localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            }
+
+            // --- ДОБАВЛЕНИЕ ТРЕКОВ ЭКРАНА (ЕСЛИ ДЕМОНСТРИРУЕМ) ---
+            if (screenStream && isSharingScreen) {
+                const videoTrack = screenStream.getVideoTracks()[0];
+                if (videoTrack) {
+                    const sender = pc.addTrack(videoTrack, screenStream);
+                    screenSenders[targetSessionId] = sender; // Сохраняем отправителя
+                }
+                screenStream.getAudioTracks().forEach(track => pc.addTrack(track, screenStream));
             }
             
             // --- ОБРАБОТКА ВХОДЯЩЕГО ПОТОКА ---
@@ -577,13 +601,34 @@
                 const stream = event.streams[0];
                 const track = event.track;
 
+                // Находим имя пользователя
+                const voiceLi = document.querySelector(`li[data-voice="${currentVoiceChannel}"]`);
+                const userDiv = voiceLi ? voiceLi.querySelector(`.voice-users div[data-session-id="${targetSessionId}"]`) : null;
+                const targetUsername = userDiv ? userDiv.textContent.replace('>> ', '').trim() : targetSessionId.slice(0, 8).toUpperCase(); 
+
                 if (track.kind === 'audio') {
-                    // Находим имя пользователя
-                    const voiceLi = document.querySelector(`li[data-voice="${currentVoiceChannel}"]`);
-                    const userDiv = voiceLi ? voiceLi.querySelector(`.voice-users div[data-session-id="${targetSessionId}"]`) : null;
-                    const targetUsername = userDiv ? userDiv.textContent.replace('>> ', '').trim() : targetSessionId.slice(0, 8).toUpperCase(); 
-                    
-                    ensureRemoteAudio(targetSessionId, targetUsername, stream);
+                    ensureMediaWindow(targetSessionId, targetUsername, stream, 'audio');
+                } else if (track.kind === 'video') {
+                    ensureMediaWindow(targetSessionId, targetUsername, stream, 'video');
+                }
+            };
+
+            // --- АВТОМАТИЧЕСКОЕ ПЕРЕСОГЛАСОВАНИЕ (negotiationneeded) ---
+            pc.onnegotiationneeded = async () => {
+                if (isInitiator) {
+                    try {
+                        addSystemMessage(`ИНИЦИАЦИЯ ПЕРЕСОГЛАСОВАНИЯ...`);
+                        const offer = await pc.createOffer();
+                        await pc.setLocalDescription(offer);
+                        await sendSignal({
+                            offer: pc.localDescription.toJSON(),
+                            senderSessionId: localSessionId,
+                            senderUsername: currentUsername,
+                            type: 'offer'
+                        }, targetSessionId);
+                    } catch (e) {
+                        console.error("Ошибка создания/отправки OFFER в onnegotiationneeded:", e);
+                    }
                 }
             };
             
@@ -598,16 +643,14 @@
                     }, targetSessionId);
                 }
             };
-
+            
             // --- ОБРАБОТКА СОСТОЯНИЙ (ДЛЯ ДЕБАГА) ---
             pc.oniceconnectionstatechange = () => {
-                console.log(`ICE State for ${targetSessionId.slice(0, 4)}: ${pc.iceConnectionState}`);
+                if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
+                    console.log(`ICE State for ${targetSessionId.slice(0, 4)}: ${pc.iceConnectionState}. Попытка восстановления...`);
+                }
             };
-            pc.onsignalingstatechange = () => {
-                console.log(`Signaling State for ${targetSessionId.slice(0, 4)}: ${pc.signalingState}`);
-            };
-
-
+            
             // --- ИНИЦИИРОВАНИЕ СОЕДИНЕНИЯ (OFFER) ---
             if (isInitiator) {
                 try {
@@ -625,32 +668,24 @@
             }
         }
 
-        // --- КЛЮЧЕВОЙ ФИКС ДЛЯ СТАБИЛЬНОСТИ ---
         async function handleOffer(senderSessionId, offer, senderUsername) {
             let pc = peerConnections[senderSessionId];
             
-            // Если соединение еще не создано (что маловероятно, но возможно), создаем его
             if (!pc) {
-                addSystemMessage(`ОШИБКА: OFFER БЕЗ PC. ПЕРЕ-ИНИЦИАЛИЗАЦИЯ.`, true);
-                // Создаем PC (Responder не должен быть Initiator, поэтому false)
+                // Если соединение еще не создано, создаем его (Responder)
                 createPeerConnection(senderSessionId, false);
                 pc = peerConnections[senderSessionId];
             }
 
-            if (!pc) return; // На всякий случай
+            if (!pc) return; 
 
-            // КРИТИЧЕСКАЯ ПРОВЕРКА: Если сигнальное состояние позволяет
             try {
                 if (pc.signalingState !== 'stable') {
-                    // Это может быть повторный offer или конфликт. Игнорируем или ждем.
-                    // Для простоты, если состояние не stable, мы сначала завершаем ожидающую операцию.
-                    // В реальном мире тут нужна более сложная логика роллбэка, но для WebRTC Simple-Turnaround это сработает.
-                    // Если мы уже получили offer, но не успели ответить:
-                    if (pc.signalingState === 'have-local-pranswer' || pc.signalingState === 'have-remote-offer') {
-                         console.warn("Получен OFFER в нестабильном состоянии. Попытка роллбэка.");
-                         // await pc.setLocalDescription({type: "rollback"}); // rollback - не везде поддерживается
-                         // ВМЕСТО роллбэка - просто пропускаем, чтобы не спамить.
-                         return;
+                    if (pc.signalingState === 'have-local-offer') {
+                         await pc.setLocalDescription({ type: "rollback" });
+                    } else if (pc.signalingState !== 'stable' && pc.signalingState !== 'have-remote-offer') {
+                        console.warn("Получен OFFER в нестабильном состоянии, ожидание:", pc.signalingState);
+                        return;
                     }
                 }
                 
@@ -664,6 +699,7 @@
                     senderUsername: currentUsername,
                     type: 'answer'
                 }, senderSessionId);
+                addSystemMessage(`ОТПРАВЛЕН ОТВЕТ ${senderUsername}.`);
             } catch (e) {
                 console.error("КРИТИЧЕСКАЯ ОШИБКА ОБРАБОТКИ OFFER:", e);
                 addSystemMessage(`ОШИБКА: СБОЙ ОБРАБОТКИ ПРЕДЛОЖЕНИЯ ОТ ${senderUsername}.`, true);
@@ -677,7 +713,6 @@
                 return;
             }
             
-            // КРИТИЧЕСКАЯ ПРОВЕРКА: принимаем ответ, только если мы ждем его (т.е. у нас есть локальный offer)
             if (pc.signalingState === 'have-local-offer') {
                 try {
                     await pc.setRemoteDescription(new RTCSessionDescription(answer));
@@ -696,7 +731,6 @@
                 try {
                     await pc.addIceCandidate(new RTCIceCandidate(candidate));
                 } catch (e) {
-                    // Это нормально, если кандидат пришел после закрытия соединения или в неподходящий момент
                     console.error('Ошибка добавления ICE-кандидата (игнорируется):', e);
                 }
             }
@@ -710,14 +744,156 @@
 
             const recipientCollection = signalingCollectionRef(targetSessionId); 
             try {
-                // Используем addDoc, чтобы создать УНИКАЛЬНЫЙ документ для сигнала
                 await addDoc(recipientCollection, signalData); 
             } catch (e) {
                 console.error(`Ошибка отправки сигнала к ${targetSessionId}:`, e);
             }
         }
+        
+        // --- ЛОГИКА ПЕРЕТАСКИВАНИЯ ---
+        function makeDraggable(element) {
+            let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+            const dragHeader = element.querySelector('.drag-handle');
+            
+            if (dragHeader) {
+                dragHeader.onmousedown = dragMouseDown;
+            } else {
+                element.onmousedown = dragMouseDown;
+            }
 
-        // --- УПРАВЛЕНИЕ МИКРОФОНОМ ---
+            function dragMouseDown(e) {
+                e = e || window.event;
+                e.preventDefault();
+                // get the mouse cursor position at startup:
+                pos3 = e.clientX;
+                pos4 = e.clientY;
+                document.onmouseup = closeDragElement;
+                // call a function whenever the cursor moves:
+                document.onmousemove = elementDrag;
+            }
+
+            function elementDrag(e) {
+                e = e || window.event;
+                e.preventDefault();
+                // calculate the new cursor position:
+                pos1 = pos3 - e.clientX;
+                pos2 = pos4 - e.clientY;
+                pos3 = e.clientX;
+                pos4 = e.clientY;
+                // set the element's new position:
+                element.style.top = (element.offsetTop - pos2) + "px";
+                element.style.left = (element.offsetLeft - pos1) + "px";
+            }
+
+            function closeDragElement() {
+                // stop moving when mouse button is released:
+                document.onmouseup = null;
+                document.onmousemove = null;
+            }
+        }
+
+        // --- УПРАВЛЕНИЕ УДАЛЕННЫМ АУДИО/ВИДЕО (ОБНОВЛЕНИЕ) ---
+        
+        /**
+         * Создает или обновляет плавающее окно для аудио/видео.
+         * @param {string} sessionId - ID сессии пользователя.
+         * @param {string} username - Имя пользователя.
+         * @param {MediaStream} stream - Медиа-поток.
+         * @param {string} type - 'audio' или 'video'.
+         * @param {boolean} isLocal - Является ли поток локальным (для sharer'а).
+         */
+        function ensureMediaWindow(sessionId, username, stream, type, isLocal = false) {
+            const windowId = `window-${sessionId}`;
+            const mediaId = `${sessionId}-${type}`;
+            let windowElement = document.getElementById(windowId);
+            
+            if (type === 'audio') {
+                // Аудио остается скрытым элементом в теле документа для воспроизведения
+                let audioElement = document.getElementById(mediaId);
+                if (!audioElement) {
+                    audioElement = document.createElement('audio'); 
+                    audioElement.id = mediaId;
+                    audioElement.autoplay = true;
+                    audioElement.style.display = 'none';
+                    document.body.appendChild(audioElement);
+                    if (!isLocal) addSystemMessage(`ПОЛУЧЕН АУДИО ПОТОК ОТ ${username}.`);
+                }
+                audioElement.srcObject = stream;
+                return;
+            }
+
+            // --- ЛОГИКА ДЛЯ ВИДЕО (ЭКРАН) ---
+            
+            if (!windowElement) {
+                // 1. Создаем контейнер окна
+                windowElement = document.createElement('div');
+                windowElement.id = windowId;
+                windowElement.className = "floating-window fixed border-2 border-green-700 bg-black/95 shadow-[0_0_15px_rgba(0,255,0,0.5)] z-50 transition-transform duration-300 ease-in-out";
+                
+                // Позиционируем
+                const numWindows = document.querySelectorAll('.floating-window').length;
+                const offset = (numWindows % 4) * 30; // Сдвиг для лучшего отображения
+                windowElement.style.top = `${50 + offset}px`;
+                windowElement.style.right = `${50 + offset}px`;
+
+                // 2. Внутреннее содержимое: заголовок и видео
+                const displayUsername = isLocal ? 'YOUR SCREEN' : `${username}'s SCREEN`;
+                windowElement.innerHTML = `
+                    <div class="drag-handle p-1.5 cursor-move bg-green-900/50 flex justify-between items-center text-xs font-bold border-b border-green-700">
+                        <span class="text-green-300">${isLocal ? '>> ' : '<< '}${displayUsername}</span>
+                        <button onclick="removeMediaWindow('${sessionId}', true)" class="text-red-500 hover:text-red-300 transition-colors">[ X ]</button>
+                    </div>
+                    <div class="video-content w-full h-full">
+                        <video id="${mediaId}" autoplay playsinline class="w-full h-full object-contain"></video>
+                    </div>
+                `;
+                
+                floatingVideosContainer.appendChild(windowElement);
+                makeDraggable(windowElement);
+                if (!isLocal) addSystemMessage(`ПОЛУЧЕН ВИДЕО ПОТОК (ЭКРАН) ОТ ${username}.`);
+            }
+
+            // 3. Привязываем видеопоток к элементу <video> внутри окна
+            const videoElement = windowElement.querySelector('video');
+            if (videoElement) {
+                videoElement.srcObject = stream;
+                
+                // Если поток завершается (пользователь прекратил делиться), удаляем окно
+                stream.getVideoTracks()[0].onended = () => {
+                    // Проверяем, что это не локальный поток (т.к. stopScreenShare() обрабатывает локальный)
+                    if (!isLocal) removeMediaWindow(sessionId, true);
+                };
+            }
+        }
+
+        /**
+         * Удаляет плавающее окно (или скрытый аудио-элемент).
+         * @param {string} sessionId - ID сессии пользователя.
+         * @param {boolean} isManualClose - Закрыто ли пользователем вручную (кнопка X).
+         */
+        window.removeMediaWindow = function(sessionId, isManualClose = false) {
+            // 1. Удаление аудио (скрытый элемент)
+            const audioId = `${sessionId}-audio`;
+            const audioElement = document.getElementById(audioId);
+            if (audioElement) {
+                audioElement.remove();
+            }
+            
+            // 2. Удаление окна (видимый элемент)
+            const windowId = `window-${sessionId}`;
+            const windowElement = document.getElementById(windowId);
+            if (windowElement) {
+                windowElement.remove();
+            }
+
+            // 3. Если пользователь закрыл свое собственное окно вручную, 
+            // но не нажал кнопку STOP в UI, мы должны остановить WebRTC и поток.
+            if (sessionId === localSessionId && isSharingScreen && isManualClose) {
+                stopScreenShare(); 
+            }
+        }
+
+        // --- УПРАВЛЕНИЕ МИКРОФОНОМ И ЭКРАНОМ ---
 
         window.toggleMic = function() {
             if (!localStream) return;
@@ -737,43 +913,112 @@
                 });
             }
         }
-
-        // --- УПРАВЛЕНИЕ УДАЛЕННЫМ АУДИО (ИСПРАВЛЕНИЕ) ---
-
-        /**
-         * Обеспечивает наличие и привязку удаленного аудиопотока к скрытому элементу <audio>.
-         */
-        function ensureRemoteAudio(sessionId, username, stream) {
-            const id = `${sessionId}-audio`;
-            let audioElement = document.getElementById(id);
-
-            if (!audioElement) {
-                audioElement = document.createElement('audio'); 
-                audioElement.id = id;
-                audioElement.autoplay = true;
-                audioElement.style.display = 'none';
-                document.body.appendChild(audioElement);
-                addSystemMessage(`ПОЛУЧЕН АУДИО ПОТОК ОТ ${username}.`);
+        
+        window.toggleScreenShare = function() {
+            if (isSharingScreen) {
+                stopScreenShare();
+            } else {
+                startScreenShare();
             }
+        }
+        
+        async function startScreenShare() {
+            if (!currentVoiceChannel) {
+                addSystemMessage("ОШИБКА: СНАЧАЛА ПОДКЛЮЧИТЕСЬ К ГОЛОСОВОМУ КАНАЛУ.", true);
+                return;
+            }
+            if (isSharingScreen) return;
+
+            addSystemMessage("ЗАХВАТ ЭКРАНА...");
+            try {
+                // Запрос на захват экрана с видео и опционально аудио
+                const stream = await navigator.mediaDevices.getDisplayMedia({ 
+                    video: true, 
+                    audio: true 
+                });
+                
+                screenStream = stream;
+                isSharingScreen = true;
+                screenToggleButton.textContent = '🖥️ SCREEN: ON';
+                screenToggleButton.classList.add('bg-green-600', 'hover:bg-green-700');
+                screenToggleButton.classList.remove('bg-green-900/20', 'hover:bg-green-800');
+
+                const videoTrack = screenStream.getVideoTracks()[0];
+                const audioTrack = screenStream.getAudioTracks()[0];
+                
+                // 1. Отображаем локальный экран в плавающем окне для себя
+                ensureMediaWindow(localSessionId, currentUsername, stream, 'video', true);
+                
+                // 2. Добавляем треки во все существующие PeerConnections
+                Object.keys(peerConnections).forEach(targetSessionId => {
+                    const pc = peerConnections[targetSessionId];
+                    // Добавляем видео трек и сохраняем отправителя
+                    if (videoTrack) {
+                        const sender = pc.addTrack(videoTrack, screenStream);
+                        screenSenders[targetSessionId] = sender;
+                    }
+                    // Добавляем аудио трек экрана (опционально)
+                    if (audioTrack) {
+                         pc.addTrack(audioTrack, screenStream);
+                    }
+                });
+                
+                // 3. Слушаем событие завершения демонстрации через UI браузера
+                videoTrack.onended = stopScreenShare;
+
+                addSystemMessage("ДЕМОНСТРАЦИЯ ЭКРАНА НАЧАТА.");
+                playTone(1500, 0.1);
+
+            } catch (e) {
+                console.error("Ошибка захвата экрана:", e);
+                addSystemMessage("ОШИБКА: НЕ УДАЛОСЬ ЗАХВАТИТЬ ЭКРАН.", true);
+                isSharingScreen = false;
+                screenToggleButton.textContent = '🖥️ SCREEN: OFF';
+                screenToggleButton.classList.remove('bg-green-600', 'hover:bg-green-700');
+                screenToggleButton.classList.add('bg-green-900/20', 'hover:bg-green-800');
+            }
+        }
+
+        async function stopScreenShare() {
+            if (!isSharingScreen || !screenStream) return;
+
+            addSystemMessage("ОСТАНОВКА ДЕМОНСТРАЦИИ ЭКРАНА...");
             
-            // Ключевой шаг: привязываем поток к элементу.
-            audioElement.srcObject = stream;
+            // 1. Удаляем треки из всех PeerConnections
+            Object.keys(peerConnections).forEach(targetSessionId => {
+                const pc = peerConnections[targetSessionId];
+                const videoSender = screenSenders[targetSessionId];
+                
+                // Удаляем видео трек
+                if (videoSender) {
+                    pc.removeTrack(videoSender);
+                    delete screenSenders[targetSessionId];
+                }
+                
+                // Удаляем аудио треки, связанные со screenStream
+                pc.getSenders().forEach(sender => {
+                    if (sender.track && screenStream.getAudioTracks().includes(sender.track)) {
+                         pc.removeTrack(sender);
+                    }
+                });
+            });
+
+            // 2. Останавливаем локальные треки и удаляем локальное окно
+            screenStream.getTracks().forEach(track => track.stop());
+            screenStream = null;
+            removeMediaWindow(localSessionId, false); // Удаляем локальное окно
+            isSharingScreen = false;
+
+            // 3. Обновляем UI
+            screenToggleButton.textContent = '🖥️ SCREEN: OFF';
+            screenToggleButton.classList.remove('bg-green-600', 'hover:bg-green-700');
+            screenToggleButton.classList.add('bg-green-900/20', 'hover:bg-green-800');
+            addSystemMessage("ДЕМОНСТРАЦИЯ ЭКРАНА ОСТАНОВЛЕНА.");
+            playTone(300, 0.1);
+
+            // 4. onnegotiationneeded будет вызван, что приведет к новому Offer.
         }
 
-        /**
-         * Удаляет скрытый элемент <audio> и останавливает его поток.
-         */
-        window.removeRemoteAudio = function(sessionId) {
-            const id = `${sessionId}-audio`;
-            const element = document.getElementById(id);
-            if (element) {
-                const stream = element.srcObject;
-                if (stream) {
-                    stream.getTracks().forEach(track => track.stop());
-                }
-                element.remove();
-            }
-        }
 
         // --- UTILS (Звук) ---
         const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -905,10 +1150,42 @@
         #sidebar {
             transition: transform 0.3s ease-in-out;
         }
+
+        /* --- СТИЛИ ПЛАВАЮЩЕГО ОКНА ДЕМОНСТРАЦИИ --- */
+        .floating-window {
+            /* Базовый размер */
+            width: 280px;
+            height: 180px; 
+            /* Фон и прозрачность */
+            background-color: #000000;
+            opacity: 0.95;
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.5);
+            /* Минимальный размер для адаптивности */
+            min-width: 200px;
+            min-height: 150px;
+        }
+        
+        .floating-window .drag-handle {
+            user-select: none;
+            background-color: rgba(0, 50, 0, 0.8);
+            cursor: move;
+        }
+
+        .floating-window video {
+            width: 100%;
+            height: 100%;
+            display: block;
+            background: black;
+        }
     </style>
 </head>
 <body class="h-screen w-screen flex flex-col crt-flicker">
     <div class="scanlines"></div>
+
+    <!-- КОНТЕЙНЕР ДЛЯ ВСЕХ ПЛАВАЮЩИХ ВИДЕО (ЭКРАНОВ) -->
+    <div id="floating-videos-container">
+        <!-- Плавающие окна будут добавлены сюда -->
+    </div>
 
     <!-- LOGIN SCREEN -->
     <div id="login-screen" class="absolute inset-0 flex flex-col items-center justify-center bg-black z-40">
@@ -918,7 +1195,7 @@
  \___ \| |     / _ \   \  /  
   ___) | |___ / ___ \  /  \  
  |____/|_____/_/   \_\/_/\_\ 
-      OPERATING SYSTEM v3.0
+      OPERATING SYSTEM v5.0
         </pre>
         
         <div class="w-11/12 max-w-md p-6 border-2 border-green-800 bg-black/90 shadow-[0_0_20px_rgba(0,255,0,0.2)]">
@@ -997,10 +1274,13 @@
                         <div class="text-[10px] uppercase tracking-widest mb-1 opacity-70">Текущая Частота</div>
                         <div id="current-voice-name" class="font-bold text-lg mb-2"></div>
                         
-                        <!-- Микрофон -->
+                        <!-- Микрофон и Экран -->
                         <div class="flex space-x-2 mb-3">
                             <button id="mic-toggle-btn" onclick="toggleMic()" class="flex-1 bg-green-900/20 border border-green-800 text-green-400 hover:bg-green-800 hover:text-white transition-colors py-1 text-xs sm:text-sm uppercase">
                                 🎤 MIC: ON
+                            </button>
+                            <button id="screen-toggle-btn" onclick="toggleScreenShare()" class="flex-1 bg-green-900/20 border border-green-800 text-green-400 hover:bg-green-800 hover:text-white transition-colors py-1 text-xs sm:text-sm uppercase">
+                                🖥️ SCREEN: OFF
                             </button>
                         </div>
 
@@ -1035,7 +1315,7 @@
                     <span class="border border-green-700 px-2 py-0.5">REC ●</span>
                 </div>
             </div>
-
+            
             <!-- MESSAGES -->
             <div id="chat-messages" class="flex-1 overflow-y-auto p-4 md:p-6 font-mono space-y-2 text-sm sm:text-base">
                 <!-- Начальные сообщения для стилизации -->
@@ -1055,7 +1335,7 @@
                     <span class="mr-3 text-green-500 font-bold whitespace-nowrap text-sm sm:text-base">root@slax:~#</span>
                     <input type="text" id="message-input" placeholder="execute_command..." autocomplete="off" class="text-sm sm:text-base">
                 </div>
-                <div class="text-[10px] opacity-30 mt-1 text-right">SLAX_MESSENGER v3.0 // DO NOT DISTRIBUTE</div>
+                <div class="text-[10px] opacity-30 mt-1 text-right">SLAX_MESSENGER v5.0 // DO NOT DISTRIBUTE</div>
             </div>
         </div>
     </div>
