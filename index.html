@@ -337,7 +337,7 @@
             settingsPanel.id = 'settings-panel';
             settingsPanel.className = 'fixed inset-0 z-50 hidden flex items-center justify-center bg-black/90';
             settingsPanel.innerHTML = `
-                <div class="w-11/12 max-w-md border-2 border-blue-600 bg-black/95 p-6 shadow-[0_0_30px_rgba(0,100,255,0.5)]">
+                <div class="w-11/12 max-w-md max-h-[90vh] overflow-y-auto border-2 border-blue-600 bg-black/95 p-6 shadow-[0_0_30px_rgba(0,100,255,0.5)]">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-xl font-bold text-blue-400">
                             >> НАСТРОЙКИ ПОЛЬЗОВАТЕЛЯ
@@ -572,7 +572,7 @@
             // Создаем панель записи голосового сообщения
             voiceRecordingPanel = document.createElement('div');
             voiceRecordingPanel.id = 'voice-recording-panel';
-            voiceRecordingPanel.className = 'fixed bottom-24 left-1/2 transform -translate-x-1/2 z-50 hidden bg-black/90 border-2 border-red-600 p-4 rounded-lg shadow-[0_0_20px_rgba(255,0,0,0.5)]';
+            voiceRecordingPanel.className = 'fixed bottom-24 left-1/2 transform -translate-x-1/2 z-50 hidden bg-black/90 border-2 border-red-600 p-4 rounded-lg shadow-[0_0_20px_rgba(255,0,0,0.5)] max-w-[90vw]';
             voiceRecordingPanel.innerHTML = `
                 <div class="text-center mb-3">
                     <div class="text-red-400 font-bold text-lg">ЗАПИСЬ ГОЛОСОВОГО СООБЩЕНИЯ</div>
@@ -1230,7 +1230,7 @@
             adminPanel.id = 'admin-panel';
             adminPanel.className = 'fixed inset-0 z-50 hidden flex items-center justify-center bg-black/90';
             adminPanel.innerHTML = `
-                <div class="w-11/12 max-w-2xl border-2 border-yellow-600 bg-black/95 p-6 shadow-[0_0_30px_rgba(255,255,0,0.5)]">
+                <div class="admin-panel-container w-11/12 max-w-2xl max-h-[90vh] overflow-y-auto border-2 border-yellow-600 bg-black/95 p-6 shadow-[0_0_30px_rgba(255,255,0,0.5)]">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-xl font-bold text-yellow-400">
                             >> ADMIN ABYSE v1.3
@@ -2690,6 +2690,35 @@
         body.theme-red .text-green-700,
         body.theme-red .text-green-100 {
             color: var(--terminal-color) !important;
+        }
+        
+        /* Новые стили для ограничения размеров панелей */
+        .admin-panel-container {
+            max-height: 90vh !important;
+            overflow-y: auto !important;
+        }
+        
+        .admin-panel-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .admin-panel-container::-webkit-scrollbar-track {
+            background: #000000;
+        }
+        
+        .admin-panel-container::-webkit-scrollbar-thumb {
+            background: #444444;
+            border: 1px solid #ff0;
+        }
+        
+        .admin-panel-container::-webkit-scrollbar-thumb:hover {
+            background: #666666;
+        }
+        
+        /* Для Firefox */
+        .admin-panel-container {
+            scrollbar-width: thin;
+            scrollbar-color: #444 #000;
         }
     </style>
 </head>
