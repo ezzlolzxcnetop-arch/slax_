@@ -72,6 +72,8 @@
         let adminBroadcastsUnsubscribe = null;
         let isRainbowEventActive = false;
         let isSilentEventActive = false;
+        let isMusicEventActive = false;
+        let currentMusicName = null;
         let lastProcessedBroadcastId = null;
 
         // Настройки пользователя
@@ -124,6 +126,7 @@
         let voiceMessageButton = null;
         let voiceRecordingPanel = null;
         let voiceVisualizer = null;
+        let backgroundMusic = null;
 
         // --- ЛОГИКА АДАПТИВНОСТИ ---
         window.toggleSidebar = function() {
@@ -830,47 +833,6 @@
                 addSystemMessage("ОШИБКА ОТПРАВКИ ГОЛОСОВОГО СООБЩЕНИЯ", true);
             }
         }
-        
-        // Функция для воспроизведения голосовых сообщений
-        function playVoiceMessage(base64Audio, duration, messageId) {
-            if (isSilentEventActive) return;
-            
-            const audio = new Audio(`data:audio/webm;base64,${base64Audio}`);
-            
-            // Создаем элемент для отображения прогресса воспроизведения
-            const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
-            if (messageElement) {
-                const progressBar = messageElement.querySelector('.voice-progress-bar');
-                const progressFill = messageElement.querySelector('.voice-progress-fill');
-                const timeDisplay = messageElement.querySelector('.voice-time');
-                
-                audio.addEventListener('timeupdate', () => {
-                    const progress = (audio.currentTime / audio.duration) * 100;
-                    if (progressFill) {
-                        progressFill.style.width = `${progress}%`;
-                    }
-                    if (timeDisplay) {
-                        const currentTime = Math.floor(audio.currentTime);
-                        const totalTime = Math.floor(audio.duration || duration);
-                        timeDisplay.textContent = `${currentTime}/${totalTime}с`;
-                    }
-                });
-                
-                audio.addEventListener('ended', () => {
-                    if (progressFill) {
-                        progressFill.style.width = '0%';
-                    }
-                    if (timeDisplay) {
-                        timeDisplay.textContent = `0/${duration}с`;
-                    }
-                });
-            }
-            
-            audio.play().catch(e => {
-                console.error("Ошибка воспроизведения аудио:", e);
-                addSystemMessage("ОШИБКА ВОСПРОИЗВЕДЕНИЯ АУДИО", true);
-            });
-        }
 
         // --- ЧАСТЬ 4: АДМИН СИСТЕМА ---
         
@@ -879,6 +841,7 @@
             createAdminPanel();
             subscribeToAdminEvents();
             subscribeToAdminBroadcasts();
+            subscribeToAdminMusic();
             updateAdminButtonVisibility();
             
             if (currentUsername === 'WINTER') {
@@ -901,6 +864,7 @@
                     await setDoc(adminEventsRef, {
                         rainbow: false,
                         silent: false,
+                        music: false,
                         createdAt: serverTimestamp(),
                         createdBy: currentUsername,
                         lastUpdated: serverTimestamp(),
@@ -933,9 +897,11 @@
                     
                     isRainbowEventActive = data.rainbow === true;
                     isSilentEventActive = data.silent === true;
+                    isMusicEventActive = data.music === true;
                     
                     applyRainbowEvent(isRainbowEventActive);
                     applySilentEvent(isSilentEventActive);
+                    applyMusicEvent(isMusicEventActive);
                     updateAdminEventButtons();
                     updateAdminStatus();
                     
@@ -953,6 +919,37 @@
             }, (error) => {
                 console.error("Ошибка подписки на события:", error);
                 addSystemMessage("ОШИБКА СИНХРОНИЗАЦИИ СОБЫТИЙ", true);
+            });
+        }
+        
+        function subscribeToAdminMusic() {
+            const adminMusicRef = doc(db, 'artifacts', appId, 'public', 'data', 'admin_music', 'current');
+            
+            onSnapshot(adminMusicRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    if (data.audioBase64 && data.name) {
+                        currentMusicName = data.name;
+                        
+                        // Создаем или обновляем элемент аудио
+                        if (!backgroundMusic) {
+                            backgroundMusic = document.createElement('audio');
+                            backgroundMusic.id = 'background-music';
+                            backgroundMusic.loop = true;
+                            backgroundMusic.style.display = 'none';
+                            document.body.appendChild(backgroundMusic);
+                        }
+                        
+                        // Обновляем источник
+                        backgroundMusic.src = `data:${data.type};base64,${data.audioBase64}`;
+                        updateAdminMusicInfo();
+                        
+                        // Если музыкальный режим активен, запускаем
+                        if (isMusicEventActive) {
+                            applyMusicEvent(true);
+                        }
+                    }
+                }
             });
         }
         
@@ -1011,7 +1008,8 @@
                 
                 const eventNames = {
                     rainbow: "RAINBOW MODE",
-                    silent: "SILENT MODE"
+                    silent: "SILENT MODE",
+                    music: "BACKGROUND MUSIC"
                 };
                 
                 const action = value ? "АКТИВИРОВАН" : "ВЫКЛЮЧЕН";
@@ -1029,55 +1027,120 @@
         window.disableRainbow = () => updateAdminEvent('rainbow', false);
         window.enableSilent = () => updateAdminEvent('silent', true);
         window.disableSilent = () => updateAdminEvent('silent', false);
+        window.enableMusic = () => updateAdminEvent('music', true);
+        window.disableMusic = () => updateAdminEvent('music', false);
         
+        // ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ РАДУЖНОГО ЭФФЕКТА
         function applyRainbowEvent(isActive) {
             console.log(`Rainbow: ${isActive ? 'ON' : 'OFF'}`);
             
             if (isActive) {
                 document.body.classList.add('rainbow-mode');
-                
-                if (!document.getElementById('rainbow-styles')) {
-                    const style = document.createElement('style');
-                    style.id = 'rainbow-styles';
-                    style.textContent = `
-                        .rainbow-mode {
-                            animation: rainbow-bg 5s linear infinite !important;
-                        }
-                        .rainbow-mode .text-green-100,
-                        .rainbow-mode .text-green-200,
-                        .rainbow-mode .text-green-300,
-                        .rainbow-mode .text-green-400,
-                        .rainbow-mode .text-green-500,
-                        .rainbow-mode .text-green-600 {
-                            animation: rainbow-text 2s linear infinite !important;
-                        }
-                        @keyframes rainbow-bg {
-                            0% { background-color: #000000; }
-                            20% { background-color: #1a0000; }
-                            40% { background-color: #001a00; }
-                            60% { background-color: #00001a; }
-                            80% { background-color: #1a1a00; }
-                            100% { background-color: #000000; }
-                        }
-                        @keyframes rainbow-text {
-                            0% { color: #ff0000 !important; }
-                            17% { color: #ffff00 !important; }
-                            34% { color: #00ff00 !important; }
-                            51% { color: #00ffff !important; }
-                            68% { color: #0000ff !important; }
-                            85% { color: #ff00ff !important; }
-                            100% { color: #ff0000 !important; }
-                        }
-                    `;
-                    document.head.appendChild(style);
-                }
             } else {
                 document.body.classList.remove('rainbow-mode');
+                // Восстанавливаем тему
+                applyTheme(userSettings.theme);
             }
         }
         
         function applySilentEvent(isActive) {
             console.log(`Silent: ${isActive ? 'ON' : 'OFF'}`);
+        }
+        
+        // ФУНКЦИЯ ДЛЯ ФОНОВОЙ МУЗЫКИ
+        function applyMusicEvent(isActive) {
+            console.log(`Music: ${isActive ? 'ON' : 'OFF'}`);
+            
+            if (!backgroundMusic) return;
+            
+            if (isActive) {
+                // Включаем музыку
+                backgroundMusic.volume = 0.3;
+                backgroundMusic.play().then(() => {
+                    console.log("Фоновая музыка запущена");
+                    if (userSettings.notifications) {
+                        addSystemMessage("ФОНОВАЯ МУЗЫКА ВКЛЮЧЕНА", false);
+                    }
+                }).catch(error => {
+                    console.error("Ошибка воспроизведения музыки:", error);
+                    if (error.name === 'NotAllowedError') {
+                        addSystemMessage("РАЗРЕШИТЕ АВТОВОСПРОИЗВЕДЕНИЕ МУЗЫКИ В БРАУЗЕРЕ", true);
+                    }
+                });
+            } else {
+                // Выключаем музыку
+                backgroundMusic.pause();
+                backgroundMusic.currentTime = 0;
+                console.log("Фоновая музыка остановлена");
+                if (userSettings.notifications) {
+                    addSystemMessage("ФОНОВАЯ МУЗЫКА ВЫКЛЮЧЕНА", false);
+                }
+            }
+        }
+        
+        window.uploadMusic = async function() {
+            if (currentUsername !== 'WINTER') {
+                addSystemMessage("ТРЕБУЮТСЯ ПРАВА АДМИНА", true);
+                return;
+            }
+            
+            const fileInput = document.getElementById('music-upload');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                addSystemMessage("ВЫБЕРИТЕ ФАЙЛ", true);
+                return;
+            }
+            
+            // Проверка размера (1 МБ = 1024 * 1024 байт)
+            if (file.size > 1024 * 1024) {
+                addSystemMessage("ФАЙЛ СЛИШКОМ БОЛЬШОЙ (МАКСИМУМ 1 МБ)", true);
+                return;
+            }
+            
+            // Проверка типа
+            if (!file.type.startsWith('audio/')) {
+                addSystemMessage("ФАЙЛ ДОЛЖЕН БЫТЬ АУДИО", true);
+                return;
+            }
+            
+            const reader = new FileReader();
+            
+            reader.onloadend = async () => {
+                // Конвертируем в base64 (убираем префикс data:...)
+                const base64 = reader.result.split(',')[1];
+                
+                try {
+                    const adminMusicRef = doc(db, 'artifacts', appId, 'public', 'data', 'admin_music', 'current');
+                    
+                    await setDoc(adminMusicRef, {
+                        audioBase64: base64,
+                        name: file.name,
+                        size: file.size,
+                        type: file.type,
+                        uploadedBy: currentUsername,
+                        uploadedAt: serverTimestamp()
+                    });
+                    
+                    addSystemMessage(`МУЗЫКА ЗАГРУЖЕНА: ${file.name}`, false);
+                    
+                    // Очищаем input
+                    fileInput.value = '';
+                    
+                } catch (error) {
+                    console.error("Ошибка загрузки музыки:", error);
+                    addSystemMessage(`ОШИБКА ЗАГРУЗКИ: ${error.message}`, true);
+                }
+            };
+            
+            reader.readAsDataURL(file);
+        };
+        
+        function updateAdminMusicInfo() {
+            const musicInfo = document.getElementById('current-music-info');
+            if (musicInfo) {
+                musicInfo.textContent = currentMusicName ? `Загружен файл: ${currentMusicName}` : 'Музыка не загружена';
+            }
         }
         
         window.sendAdminBroadcast = async function() {
@@ -1135,6 +1198,8 @@
             console.log("Is admin:", currentUsername === 'WINTER');
             console.log("Rainbow mode:", isRainbowEventActive);
             console.log("Silent mode:", isSilentEventActive);
+            console.log("Music mode:", isMusicEventActive);
+            console.log("Music name:", currentMusicName);
             console.log("Session ID:", localSessionId);
             console.log("Firestore path:", `artifacts/${appId}/public/data/admin_events/current`);
             console.log("========================");
@@ -1168,7 +1233,7 @@
                 <div class="w-11/12 max-w-2xl border-2 border-yellow-600 bg-black/95 p-6 shadow-[0_0_30px_rgba(255,255,0,0.5)]">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-xl font-bold text-yellow-400">
-                            >> ADMIN ABYSE v1.2
+                            >> ADMIN ABYSE v1.3
                             <span id="connection-status" class="text-xs ml-2 text-green-500">ONLINE</span>
                         </h2>
                         <div class="flex space-x-2">
@@ -1195,10 +1260,16 @@
                                     ${isRainbowEventActive ? 'АКТИВЕН' : 'ВЫКЛ'}
                                 </span>
                             </div>
-                            <div class="flex justify-between">
+                            <div class="flex justify-between mb-1">
                                 <span>Silent Mode:</span>
                                 <span id="silent-status" class="${isSilentEventActive ? 'text-green-400' : 'text-gray-400'}">
                                     ${isSilentEventActive ? 'АКТИВЕН' : 'ВЫКЛ'}
+                                </span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>Background Music:</span>
+                                <span id="music-status" class="${isMusicEventActive ? 'text-green-400' : 'text-gray-400'}">
+                                    ${isMusicEventActive ? 'АКТИВЕН' : 'ВЫКЛ'}
                                 </span>
                             </div>
                         </div>
@@ -1207,7 +1278,7 @@
                     <!-- ГЛОБАЛЬНЫЕ СОБЫТИЯ -->
                     <div class="mb-8">
                         <h3 class="text-lg font-bold text-yellow-300 mb-4 border-b border-yellow-800 pb-2">
-                            ГЛОБАЛЬНЫЕ СОБЫТИЯ
+                            ГЛОБАЛЬНЫЕ СОБЫТИИ
                         </h3>
                         
                         <div class="space-y-4">
@@ -1246,6 +1317,51 @@
                                     </button>
                                 </div>
                             </div>
+                            
+                            <!-- Music Event -->
+                            <div class="flex items-center justify-between p-3 border border-yellow-800 hover:border-yellow-600 transition-colors">
+                                <div>
+                                    <div class="font-bold text-yellow-400">BACKGROUND MUSIC</div>
+                                    <div class="text-xs text-yellow-600">Фоновая музыка на сайте</div>
+                                </div>
+                                <div class="flex space-x-2">
+                                    <button id="enable-music-btn" onclick="enableMusic()" 
+                                        class="px-4 py-1 border border-green-700 hover:bg-green-700 transition-colors text-sm">
+                                        ВКЛ
+                                    </button>
+                                    <button id="disable-music-btn" onclick="disableMusic()" 
+                                        class="px-4 py-1 border border-red-700 hover:bg-red-700 transition-colors text-sm">
+                                        ВЫКЛ
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- ЗАГРУЗКА МУЗЫКИ -->
+                    <div class="mb-8">
+                        <h3 class="text-lg font-bold text-yellow-300 mb-4 border-b border-yellow-800 pb-2">
+                            ФОНОВАЯ МУЗЫКА
+                        </h3>
+                        
+                        <div class="space-y-4">
+                            <div class="p-3 border border-yellow-800 hover:border-yellow-600 transition-colors">
+                                <div class="font-bold text-yellow-400 mb-2">ТЕКУЩАЯ МУЗЫКА</div>
+                                <div id="current-music-info" class="text-xs text-yellow-600">
+                                    ${currentMusicName ? `Загружен файл: ${currentMusicName}` : 'Музыка не загружена'}
+                                </div>
+                            </div>
+                            
+                            <div class="p-3 border border-yellow-800 hover:border-yellow-600 transition-colors">
+                                <div class="font-bold text-yellow-400 mb-2">ЗАГРУЗИТЬ НОВУЮ МУЗЫКУ</div>
+                                <div class="text-xs text-yellow-600 mb-2">Выберите аудиофайл (MP3, до 1 МБ)</div>
+                                <input type="file" id="music-upload" accept="audio/mpeg,audio/*" class="w-full text-xs text-yellow-300 bg-black border border-yellow-800 p-2">
+                                <div class="flex justify-end mt-3">
+                                    <button onclick="uploadMusic()" class="px-4 py-2 border border-yellow-600 bg-yellow-900/30 hover:bg-yellow-700 hover:text-black transition-colors text-sm">
+                                        ЗАГРУЗИТЬ
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     
@@ -1279,7 +1395,7 @@
                     <div class="text-xs text-yellow-700 text-center flex justify-between">
                         <span>Пользователь: <span class="text-yellow-500">${currentUsername}</span></span>
                         <span>Статус: <span id="admin-status" class="text-yellow-500">Ожидание синхронизации...</span></span>
-                        <span>Версия: <span class="text-yellow-500">1.2</span></span>
+                        <span>Версия: <span class="text-yellow-500">1.3</span></span>
                     </div>
                 </div>
             `;
@@ -1290,6 +1406,7 @@
         function updateAdminStatus() {
             const rainbowStatus = document.getElementById('rainbow-status');
             const silentStatus = document.getElementById('silent-status');
+            const musicStatus = document.getElementById('music-status');
             const adminStatus = document.getElementById('admin-status');
             
             if (rainbowStatus) {
@@ -1302,9 +1419,14 @@
                 silentStatus.className = isSilentEventActive ? 'text-green-400' : 'text-gray-400';
             }
             
+            if (musicStatus) {
+                musicStatus.textContent = isMusicEventActive ? 'АКТИВЕН' : 'ВЫКЛ';
+                musicStatus.className = isMusicEventActive ? 'text-green-400' : 'text-gray-400';
+            }
+            
             if (adminStatus) {
                 if (currentUsername === 'WINTER') {
-                    adminStatus.innerHTML = `<span class="text-green-400">АДМИН | ${isRainbowEventActive ? 'RAINBOW' : ''}${isSilentEventActive ? ' SILENT' : ''}</span>`;
+                    adminStatus.innerHTML = `<span class="text-green-400">АДМИН | ${isRainbowEventActive ? 'RAINBOW' : ''}${isSilentEventActive ? ' SILENT' : ''}${isMusicEventActive ? ' MUSIC' : ''}</span>`;
                 } else {
                     adminStatus.innerHTML = `<span class="text-yellow-400">ТОЛЬКО ПРОСМОТР</span>`;
                 }
@@ -1316,7 +1438,9 @@
                 'enable-rainbow-btn': isRainbowEventActive,
                 'disable-rainbow-btn': !isRainbowEventActive,
                 'enable-silent-btn': isSilentEventActive,
-                'disable-silent-btn': !isSilentEventActive
+                'disable-silent-btn': !isSilentEventActive,
+                'enable-music-btn': isMusicEventActive,
+                'disable-music-btn': !isMusicEventActive
             };
             
             for (const [id, isActive] of Object.entries(buttons)) {
@@ -1416,32 +1540,51 @@
                 
                 // Если это голосовое сообщение
                 if (msg.type === 'voice' && msg.voiceData) {
-                    div.className = 'voice-message my-3 p-3 border border-blue-800 rounded bg-blue-900/10';
+                    div.className = 'voice-message my-2 p-3 border border-blue-800 rounded bg-blue-900/10 hover:bg-blue-900/20 transition-colors';
                     div.setAttribute('data-message-id', msg.id);
                     
+                    // Компактный вид как в Telegram
                     div.innerHTML = `
-                        <div class="flex items-center justify-between mb-2">
-                            <div>
-                                <span class="timestamp font-mono text-blue-700">[${timeStr}]</span>
-                                <span class="${isMe ? 'text-blue-300 font-bold' : 'text-blue-500'}">&lt;${msg.user}&gt;</span>
-                            </div>
-                            <span class="text-xs text-blue-600">Голосовое сообщение</span>
-                        </div>
-                        
-                        <div class="flex items-center space-x-4">
-                            <button onclick="playVoiceMessage('${msg.voiceData}', ${msg.duration || 0}, '${msg.id}')" 
-                                class="px-4 py-2 border border-blue-600 bg-blue-900/30 hover:bg-blue-700 transition-colors text-sm">
-                                ▶ ВОСПРОИЗВЕСТИ (${msg.duration || 0}с)
-                            </button>
-                            
-                            <div class="flex-1">
-                                <div class="voice-progress-bar h-2 bg-blue-900/30 rounded-full overflow-hidden">
-                                    <div class="voice-progress-fill h-full bg-blue-500 transition-all duration-300" style="width: 0%"></div>
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-3">
+                                <button onclick="playVoiceMessage('${msg.voiceData}', ${msg.duration || 0}, '${msg.id}')" 
+                                    class="w-8 h-8 rounded-full bg-blue-600 hover:bg-blue-500 flex items-center justify-center transition-colors">
+                                    <span class="text-white text-sm">▶</span>
+                                </button>
+                                
+                                <div class="flex flex-col">
+                                    <span class="${isMe ? 'text-blue-300 font-bold' : 'text-blue-500'} text-xs">
+                                        ${msg.user}
+                                    </span>
+                                    <span class="text-xs text-blue-700">
+                                        ${timeStr}
+                                    </span>
                                 </div>
-                                <div class="voice-time text-xs text-blue-400 mt-1 text-center">0/${msg.duration || 0}с</div>
+                            </div>
+                            
+                            <div class="flex items-center space-x-3">
+                                <!-- Визуализатор звука -->
+                                <div id="visualizer-${msg.id}" class="flex items-end h-6 space-x-0.5">
+                                    <!-- Барсы будут добавлены динамически -->
+                                </div>
+                                
+                                <!-- Прогресс и время -->
+                                <div class="flex items-center space-x-2">
+                                    <div class="voice-progress-container w-24 h-1 bg-blue-900/30 rounded-full overflow-hidden">
+                                        <div id="progress-${msg.id}" class="voice-progress-fill h-full bg-blue-500 transition-all duration-300" style="width: 0%"></div>
+                                    </div>
+                                    <span id="time-${msg.id}" class="text-xs text-blue-400 min-w-[40px]">0:${msg.duration || 0}</span>
+                                </div>
+                                
+                                <!-- Иконка голосового сообщения -->
+                                <span class="text-blue-400 text-sm">🎤</span>
                             </div>
                         </div>
                     `;
+                    
+                    // Создаем визуализатор для этого сообщения
+                    createVoiceVisualizerForMessage(msg.id, msg.duration || 0);
+                    
                 } else {
                     // Обычное текстовое сообщение
                     div.innerHTML = `
@@ -1456,6 +1599,138 @@
                 chatContainer.appendChild(div);
             });
             chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        // Функция для создания визуализатора для сообщений
+        function createVoiceVisualizerForMessage(messageId, duration) {
+            const visualizer = document.getElementById(`visualizer-${messageId}`);
+            if (!visualizer) return;
+            
+            // Создаем 20 барсов для компактного визуализатора
+            for (let i = 0; i < 20; i++) {
+                const bar = document.createElement('div');
+                bar.className = 'voice-visualizer-bar w-1 bg-blue-500 transition-all duration-150';
+                // Начальная высота - случайная для эффекта "волны"
+                const randomHeight = 2 + Math.random() * 10;
+                bar.style.height = `${randomHeight}px`;
+                visualizer.appendChild(bar);
+            }
+        }
+
+        // Функции для анимации визуализатора
+        function startVisualizerAnimation(visualizer, audio) {
+            if (!visualizer) return;
+            
+            // Создаем AudioContext для анализа
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const analyser = audioContext.createAnalyser();
+            const source = audioContext.createMediaElementSource(audio);
+            
+            source.connect(analyser);
+            analyser.connect(audioContext.destination);
+            analyser.fftSize = 256;
+            
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            
+            function updateVisualizer() {
+                if (audio.paused || audio.ended) return;
+                
+                analyser.getByteFrequencyData(dataArray);
+                const bars = visualizer.children;
+                
+                for (let i = 0; i < bars.length; i++) {
+                    const value = dataArray[Math.floor(i * (bufferLength / bars.length))] || 0;
+                    const height = 2 + (value / 255) * 20; // От 2px до 22px
+                    
+                    // Плавное изменение высоты
+                    bars[i].style.height = `${height}px`;
+                    
+                    // Изменение цвета в зависимости от интенсивности
+                    if (value > 180) {
+                        bars[i].style.backgroundColor = '#00ffff';
+                    } else if (value > 120) {
+                        bars[i].style.backgroundColor = '#0088ff';
+                    } else if (value > 60) {
+                        bars[i].style.backgroundColor = '#0066ff';
+                    } else {
+                        bars[i].style.backgroundColor = '#0044ff';
+                    }
+                }
+                
+                requestAnimationFrame(updateVisualizer);
+            }
+            
+            updateVisualizer();
+        }
+
+        function stopVisualizerAnimation(visualizer) {
+            if (!visualizer) return;
+            
+            const bars = visualizer.children;
+            for (let bar of bars) {
+                bar.style.height = '2px';
+                bar.style.backgroundColor = '#0044ff';
+            }
+        }
+
+        // Обновленная функция playVoiceMessage для анимации визуализатора при воспроизведении
+        function playVoiceMessage(base64Audio, duration, messageId) {
+            if (isSilentEventActive) return;
+            
+            const audio = new Audio(`data:audio/webm;base64,${base64Audio}`);
+            
+            // Элементы для управления
+            const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+            const progressFill = document.getElementById(`progress-${messageId}`);
+            const timeDisplay = document.getElementById(`time-${messageId}`);
+            const visualizer = document.getElementById(`visualizer-${messageId}`);
+            
+            if (messageElement) {
+                const playButton = messageElement.querySelector('button');
+                if (playButton) {
+                    playButton.innerHTML = '<span class="text-white text-sm">⏸</span>';
+                    playButton.onclick = () => audio.pause();
+                    
+                    audio.addEventListener('pause', () => {
+                        playButton.innerHTML = '<span class="text-white text-sm">▶</span>';
+                        playButton.onclick = () => playVoiceMessage(base64Audio, duration, messageId);
+                    });
+                    
+                    audio.addEventListener('ended', () => {
+                        playButton.innerHTML = '<span class="text-white text-sm">▶</span>';
+                        playButton.onclick = () => playVoiceMessage(base64Audio, duration, messageId);
+                        if (progressFill) progressFill.style.width = '0%';
+                        if (timeDisplay) timeDisplay.textContent = `0:${duration}`;
+                        stopVisualizerAnimation(visualizer);
+                    });
+                }
+            }
+            
+            // Анимация прогресса
+            audio.addEventListener('timeupdate', () => {
+                const progress = (audio.currentTime / audio.duration) * 100;
+                if (progressFill) {
+                    progressFill.style.width = `${progress}%`;
+                }
+                if (timeDisplay) {
+                    const currentTime = Math.floor(audio.currentTime);
+                    const totalTime = Math.floor(audio.duration || duration);
+                    const currentMin = Math.floor(currentTime / 60);
+                    const currentSec = currentTime % 60;
+                    const totalMin = Math.floor(totalTime / 60);
+                    const totalSec = totalTime % 60;
+                    timeDisplay.textContent = `${currentMin}:${currentSec.toString().padStart(2, '0')}/${totalMin}:${totalSec.toString().padStart(2, '0')}`;
+                }
+            });
+            
+            // Запускаем анимацию визуализатора
+            startVisualizerAnimation(visualizer, audio);
+            
+            audio.play().catch(e => {
+                console.error("Ошибка воспроизведения аудио:", e);
+                addSystemMessage("ОШИБКА ВОСПРОИЗВЕДЕНИЯ АУДИО", true);
+            });
         }
 
         function addSystemMessage(text, isError = false) {
@@ -2297,19 +2572,24 @@
         /* Голосовые сообщения */
         .voice-message {
             transition: all 0.3s ease;
+            max-width: 400px;
+            margin-left: auto;
+            margin-right: 0;
         }
         
         .voice-message:hover {
-            background-color: rgba(0, 100, 255, 0.1);
-            border-color: #00aaff;
+            transform: translateY(-1px);
+            background-color: rgba(0, 100, 255, 0.1) !important;
+            border-color: #00aaff !important;
+            box-shadow: 0 2px 10px rgba(0, 100, 255, 0.3);
         }
         
         body.theme-white .voice-message:hover {
-            background-color: rgba(100, 100, 255, 0.1);
+            background-color: rgba(100, 100, 255, 0.1) !important;
         }
         
         body.theme-red .voice-message:hover {
-            background-color: rgba(255, 100, 100, 0.1);
+            background-color: rgba(255, 100, 100, 0.1) !important;
         }
         
         /* Визуализатор голоса */
@@ -2317,36 +2597,82 @@
             transition: all 0.1s ease;
         }
         
-        /* Rainbow mode */
-        @keyframes rainbowCycle {
-            0% { text-shadow: 0 0 3px #ff0000; }
-            14% { text-shadow: 0 0 3px #ff7f00; }
-            28% { text-shadow: 0 0 3px #ffff00; }
-            42% { text-shadow: 0 0 3px #00ff00; }
-            57% { text-shadow: 0 0 3px #0000ff; }
-            71% { text-shadow: 0 0 3px #4b0082; }
-            85% { text-shadow: 0 0 3px #9400d3; }
-            100% { text-shadow: 0 0 3px #ff0000; }
+        .voice-visualizer-bar {
+            transition: all 0.15s ease;
         }
         
-        @keyframes rainbowText {
-            0% { color: #ff0000; }
-            25% { color: #00ff00; }
-            50% { color: #0000ff; }
-            75% { color: #ffff00; }
-            100% { color: #ff0000; }
+        .voice-progress-container {
+            min-width: 80px;
         }
         
+        /* Rainbow mode - ИСПРАВЛЕННЫЙ! */
         .rainbow-mode {
-            animation: rainbowCycle 3s linear infinite;
+            animation: rainbow-bg 10s linear infinite !important;
         }
         
-        .rainbow-mode .text-green-300,
-        .rainbow-mode .text-green-400,
-        .rainbow-mode .text-green-500,
-        .rainbow-mode .text-green-700,
-        .rainbow-mode .text-green-100 {
-            animation: rainbowText 2s linear infinite;
+        .rainbow-mode * {
+            animation: rainbow-colors 3s linear infinite !important;
+        }
+        
+        @keyframes rainbow-bg {
+            0% { background-color: #ff0000; }
+            14% { background-color: #ff7f00; }
+            28% { background-color: #ffff00; }
+            42% { background-color: #00ff00; }
+            57% { background-color: #0000ff; }
+            71% { background-color: #4b0082; }
+            85% { background-color: #9400d3; }
+            100% { background-color: #ff0000; }
+        }
+        
+        @keyframes rainbow-colors {
+            0% { color: #ff0000 !important; text-shadow: 0 0 5px #ff0000 !important; }
+            14% { color: #ff7f00 !important; text-shadow: 0 0 5px #ff7f00 !important; }
+            28% { color: #ffff00 !important; text-shadow: 0 0 5px #ffff00 !important; }
+            42% { color: #00ff00 !important; text-shadow: 0 0 5px #00ff00 !important; }
+            57% { color: #0000ff !important; text-shadow: 0 0 5px #0000ff !important; }
+            71% { color: #4b0082 !important; text-shadow: 0 0 5px #4b0082 !important; }
+            85% { color: #9400d3 !important; text-shadow: 0 0 5px #9400d3 !important; }
+            100% { color: #ff0000 !important; text-shadow: 0 0 5px #ff0000 !important; }
+        }
+        
+        /* Радужные границы в радужном режиме */
+        .rainbow-mode .border-green-800,
+        .rainbow-mode .border-green-700,
+        .rainbow-mode .border-green-600,
+        .rainbow-mode .border-green-500,
+        .rainbow-mode .border-blue-800,
+        .rainbow-mode .border-blue-700,
+        .rainbow-mode .border-red-800,
+        .rainbow-mode .border-red-700 {
+            border-color: currentColor !important;
+            box-shadow: 0 0 10px currentColor !important;
+        }
+        
+        /* Радужные кнопки */
+        .rainbow-mode button {
+            background-color: transparent !important;
+            border-color: currentColor !important;
+            color: currentColor !important;
+        }
+        
+        .rainbow-mode button:hover {
+            background-color: currentColor !important;
+            color: #000 !important;
+        }
+        
+        /* Для радужного режима - голосовые сообщения */
+        .rainbow-mode .voice-message {
+            border-color: currentColor !important;
+            background-color: rgba(255, 255, 255, 0.05) !important;
+        }
+        
+        .rainbow-mode .voice-visualizer-bar {
+            background-color: currentColor !important;
+        }
+        
+        .rainbow-mode .voice-progress-fill {
+            background-color: currentColor !important;
         }
         
         /* Стили для разных тем в тексте */
