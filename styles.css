@@ -48,7 +48,6 @@ body {
     100% { opacity: 0.97; }
 }
 
-/* Стили для скроллбара */
 ::-webkit-scrollbar { width: 12px; }
 ::-webkit-scrollbar-track { background: #001100; }
 ::-webkit-scrollbar-thumb { background: #003300; border: 1px solid #0f0; }
@@ -239,7 +238,7 @@ body.theme-red .voice-message:hover {
     min-width: 80px;
 }
 
-/* Rainbow mode */
+/* Rainbow mode - ИСПРАВЛЕННЫЙ! */
 .rainbow-mode {
     animation: rainbow-bg 10s linear infinite !important;
 }
