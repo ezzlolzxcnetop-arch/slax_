@@ -46,6 +46,10 @@
             localSessionId = crypto.randomUUID();
             sessionStorage.setItem('slax_session_id', localSessionId);
         }
+
+        // --- ПЕРСИСТЕНТНЫЙ ACCOUNT SID (постоянный для учётной записи) ---
+        // Сохраняется в localStorage и в документе пользователя как `accountSid`.
+        let accountSid = localStorage.getItem('slax_account_sid') || null;
         
         // --- СОСТОЯНИЕ ---
         let currentUser = null; 
@@ -225,19 +229,26 @@
 
         onAuthStateChanged(auth, (user) => {
             if (user) {
-                currentUser = user;
-                displayUid.textContent = `SID: ${localSessionId.slice(0, 8).toUpperCase()}`; 
+                    currentUser = user;
+                    displayUid.textContent = `SID: ${(accountSid || localSessionId).slice(0, 8).toUpperCase()}`; 
                 loginError.textContent = "СОЕДИНЕНИЕ УСТАНОВЛЕНО. ВВЕДИТЕ ДАННЫЕ.";
             }
         });
 
-        authMainBtn.addEventListener('click', handleAuthAction);
-        authSwitchBtn.addEventListener('click', toggleAuthMode);
-        pinInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') handleAuthAction();
-        });
+        if (authMainBtn) {
+            authMainBtn.addEventListener('click', () => { console.log('authMainBtn clicked'); handleAuthAction(); });
+        } else console.warn('authMainBtn not found');
+        if (authSwitchBtn) {
+            authSwitchBtn.addEventListener('click', () => { console.log('authSwitchBtn clicked'); toggleAuthMode(); });
+        } else console.warn('authSwitchBtn not found');
+        if (pinInput) {
+            pinInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') { console.log('pin Enter pressed'); handleAuthAction(); }
+            });
+        }
         
         function toggleAuthMode() {
+            console.log('toggleAuthMode ->', authMode);
             authMode = authMode === 'login' ? 'register' : 'login';
             if (authMode === 'login') {
                 authModeTitle.textContent = ">> LOG IN REQUIRED";
@@ -255,6 +266,7 @@
         }
 
         function handleAuthAction() {
+            console.log('handleAuthAction ->', authMode);
             if (authMode === 'login') {
                 attemptLogin();
             } else {
@@ -300,6 +312,16 @@
                 const userData = snapshot.docs[0].data();
                 if (userData.password === password) {
                     currentUsername = name;
+                    const userDocRef = doc(usersRef, name);
+                    // ensure accountSid exists for persistent identity
+                    if (userData.accountSid) {
+                        accountSid = userData.accountSid;
+                        localStorage.setItem('slax_account_sid', accountSid);
+                    } else {
+                        accountSid = crypto.randomUUID();
+                        try { await updateDoc(userDocRef, { accountSid }); } catch(e){ console.warn('failed to update accountSid on login', e); }
+                        localStorage.setItem('slax_account_sid', accountSid);
+                    }
                     
                     // Загружаем настройки пользователя если есть
                     if (userData.settings) {
@@ -343,15 +365,20 @@
                     return;
                 }
 
+                // generate persistent accountSid for this new user
+                const newAccountSid = crypto.randomUUID();
                 await setDoc(doc(usersRef, name), {
                     username: name,
                     password: password,
                     settings: userSettings,
                     plugins: userPlugins,
+                    accountSid: newAccountSid,
                     createdAt: serverTimestamp()
                 });
                 
                 currentUsername = name;
+                accountSid = newAccountSid;
+                localStorage.setItem('slax_account_sid', accountSid);
                 loginError.textContent = `ПОЛЬЗОВАТЕЛЬ ${name} УСПЕШНО СОЗДАН.`;
                 grantAccess();
 
@@ -377,6 +404,10 @@
             
             // Инициализация системы плагинов
             initializePluginsSystem();
+            
+            // Инициализация системы друзей и серверов
+            initializeFriendsSystem();
+            initializeServersSystem();
             
             // Применяем сохраненную тему
             applyTheme(userSettings.theme);
@@ -546,6 +577,24 @@ body {
             `;
             
             document.body.appendChild(pluginsPanel);
+            // Добавим краткую инструкцию по созданию плагинов прямо в панели
+            try {
+                const container = pluginsPanel.querySelector('div');
+                if (container) {
+                    const instr = document.createElement('div');
+                    instr.className = 'mb-6 p-4 border-2 border-purple-800 rounded-lg text-purple-200 text-sm';
+                    instr.innerHTML = `
+                        <h4 class="font-bold text-purple-300 mb-2">Как сделать плагин — кратко</h4>
+                        <ol class="list-decimal list-inside text-xs">
+                            <li>В поле вставьте CSS, который меняет стили (классы, :root-переменные).</li>
+                            <li>Можно использовать переменные: <code>--terminal-color</code>, <code>--terminal-bg</code>, <code>--terminal-glow</code>.</li>
+                            <li>Пример: <code>body { --terminal-color: #ff0; }</code> или <code>.voice-message { border-color: #f0f }</code>.</li>
+                            <li>Нажмите <b>ТЕСТ</b> чтобы временно посмотреть изменения, затем <b>СОХРАНИТЬ</b>.</li>
+                        </ol>
+                    `;
+                    container.insertBefore(instr, container.querySelector('.h-px') || container.firstChild);
+                }
+            } catch(e) { console.warn('Не удалось вставить инструкцию плагинов', e); }
             
             // Инициализация переключателей плагинов
             updatePluginSwitches();
@@ -715,6 +764,592 @@ body {
                 addSystemMessage("ОШИБКА СОХРАНЕНИЯ ПЛАГИНОВ", true);
             }
         }
+
+        // --- ЧАСТЬ: СИСТЕМА ДРУЗЕЙ, ЗВОНКОВ И СЕРВЕРОВ ---
+        function initializeFriendsSystem() {
+            createFriendsButton();
+            createFriendsPanel();
+            subscribeToFriendRequests();
+            subscribeToFriendsList();
+            subscribeToIncomingCalls();
+            subscribeToCallResponses();
+        }
+
+        function createFriendsButton() {
+            const userInfo = document.querySelector('.p-3.border-t-2.border-green-900');
+            if (!userInfo) return;
+
+            const container = document.createElement('div');
+            container.className = 'flex items-center space-x-2 mt-2';
+
+            const addBtn = document.createElement('button');
+            addBtn.id = 'open-friends-btn';
+            addBtn.className = 'text-green-400 hover:text-green-200 text-xs border border-green-800 px-2 py-0.5';
+            addBtn.textContent = 'ДРУЗЬЯ';
+            addBtn.onclick = toggleFriendsPanel;
+
+            container.appendChild(addBtn);
+            userInfo.appendChild(container);
+        }
+
+        function createFriendsPanel() {
+            const panel = document.createElement('div');
+            panel.id = 'friends-panel';
+            panel.className = 'fixed inset-0 z-50 hidden items-center justify-center bg-black/90';
+            panel.innerHTML = `
+                <div class="w-11/12 max-w-lg max-h-[90vh] overflow-y-auto border-2 border-green-600 bg-black/95 p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-bold text-green-400">>> ДРУЗЬЯ & ЗВОНКИ</h2>
+                        <button onclick="toggleFriendsPanel()" class="text-green-500 hover:text-green-300 text-lg">[ X ]</button>
+                    </div>
+
+                    <div class="h-px w-full bg-green-900 mb-4"></div>
+
+                    <div class="mb-4">
+                        <h3 class="text-sm text-green-300 mb-2">Отправить запрос по SID</h3>
+                        <div class="flex space-x-2">
+                            <input id="friend-sid-input" class="flex-1 bg-black border border-green-800 p-2 text-sm" placeholder="введите SID (8 символов)" />
+                            <button onclick="sendFriendRequestBySid()" class="px-3 py-2 border border-green-600 text-sm">ДОБАВИТЬ</button>
+                        </div>
+                    </div>
+
+                    <div class="mb-4">
+                        <h3 class="text-sm text-green-300 mb-2">Запросы в друзья</h3>
+                        <div id="friend-requests-list" class="space-y-2 text-sm text-green-200"></div>
+                    </div>
+
+                    <div class="mb-4">
+                        <h3 class="text-sm text-green-300 mb-2">Список друзей</h3>
+                        <div id="friends-list" class="space-y-2 text-sm text-green-200"></div>
+                    </div>
+
+                    <div class="flex justify-end">
+                        <button onclick="toggleFriendsPanel()" class="px-4 py-2 border border-gray-600">Закрыть</button>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(panel);
+        }
+
+        window.toggleFriendsPanel = function() {
+            const panel = document.getElementById('friends-panel');
+            if (!panel) return;
+            const isOpen = panel.classList.contains('hidden');
+            if (isOpen) { panel.classList.remove('hidden'); panel.classList.add('flex'); }
+            else { panel.classList.remove('flex'); panel.classList.add('hidden'); }
+        }
+
+        async function sendFriendRequestBySid() {
+            const sid = document.getElementById('friend-sid-input').value.trim();
+            if (!sid || sid.length < 4) { addSystemMessage('ВВЕДИТЕ КОРРЕКТНЫЙ SID', true); return; }
+            const normalized = sid.toLowerCase();
+            try {
+                const reqCol = collection(db, 'artifacts', appId, 'public', 'data', 'friend_requests');
+                await addDoc(reqCol, {
+                    fromUsername: currentUsername,
+                    fromSessionId: localSessionId,
+                    fromAccountId: accountSid || null,
+                    toSessionId: normalized,
+                    toAccountId: null,
+                    status: 'pending',
+                    timestamp: serverTimestamp()
+                });
+                addSystemMessage('ЗАПРОС ОТПРАВЛЕН', false);
+                document.getElementById('friend-sid-input').value = '';
+            } catch (e) {
+                console.error('Ошибка отправки запроса:', e);
+                addSystemMessage('ОШИБКА ОТПРАВКИ ЗАПРОСА', true);
+            }
+        }
+
+        // helper used from voice user list
+        window.sendFriendRequestToSession = async function(sessionId, username) {
+            try {
+                const reqCol = collection(db, 'artifacts', appId, 'public', 'data', 'friend_requests');
+                await addDoc(reqCol, {
+                    fromUsername: currentUsername,
+                    fromSessionId: localSessionId,
+                    fromAccountId: accountSid || null,
+                    toSessionId: sessionId,
+                    toAccountId: null,
+                    toUsername: username,
+                    status: 'pending',
+                    timestamp: serverTimestamp()
+                });
+                addSystemMessage(`ЗАПРОС ДРУЖБЫ ОТПРАВЛЕН ${username}`, false);
+            } catch (e) {
+                console.error('sendFriendRequestToSession error', e);
+                addSystemMessage('ОШИБКА ОТПРАВКИ', true);
+            }
+        }
+
+        function subscribeToFriendRequests() {
+            try {
+                const list = document.getElementById('friend-requests-list');
+                if (!list) return;
+                list.innerHTML = '';
+
+                const seen = new Set();
+                const renderSnapshot = (snapshot) => {
+                    snapshot.forEach(docSnap => {
+                        if (seen.has(docSnap.id)) return;
+                        seen.add(docSnap.id);
+                        const r = docSnap.data();
+                        if (r.status === 'pending') {
+                            const el = document.createElement('div');
+                            el.className = 'flex justify-between items-center border border-green-800 p-2';
+                            el.innerHTML = `
+                                <div>
+                                    <div class="font-bold">${r.fromUsername || r.fromSessionId}</div>
+                                    <div class="text-xs opacity-70">SID: ${ ( (r.fromAccountId || r.fromSessionId) || '' ).slice(0,8).toUpperCase() }</div>
+                                </div>
+                                <div class="space-x-2">
+                                    <button class="px-2 py-1 border border-green-600" onclick="acceptFriendRequest('${docSnap.id}')">Принять</button>
+                                    <button class="px-2 py-1 border border-red-600" onclick="declineFriendRequest('${docSnap.id}')">Отклонить</button>
+                                </div>
+                            `;
+                            list.appendChild(el);
+                        }
+                    });
+                };
+
+                // subscribe to account-targeted requests (new) and session-targeted (legacy)
+                if (accountSid) {
+                    const q1 = query(collection(db, 'artifacts', appId, 'public', 'data', 'friend_requests'), where('toAccountId', '==', accountSid));
+                    onSnapshot(q1, renderSnapshot);
+                }
+                const q2 = query(collection(db, 'artifacts', appId, 'public', 'data', 'friend_requests'), where('toSessionId', '==', localSessionId));
+                onSnapshot(q2, renderSnapshot);
+            } catch(e) { console.error('subscribeToFriendRequests error', e); }
+        }
+
+        async function acceptFriendRequest(requestId) {
+            try {
+                const reqRef = doc(db, 'artifacts', appId, 'public', 'data', 'friend_requests', requestId);
+                const reqSnap = await getDoc(reqRef);
+                if (!reqSnap.exists()) return;
+                const r = reqSnap.data();
+
+                // create mutual friendship with stored names (если есть)
+                const friendsRef = collection(db, 'artifacts', appId, 'public', 'data', 'friends');
+                const myId = accountSid || localSessionId;
+                const theirId = r.fromAccountId || r.fromSessionId;
+                const idA = myId + '_' + theirId;
+                const idB = theirId + '_' + myId;
+                await setDoc(doc(friendsRef, idA), { userA: myId, userAName: currentUsername, userB: theirId, userBName: r.fromUsername || theirId, createdAt: serverTimestamp() });
+                await setDoc(doc(friendsRef, idB), { userA: theirId, userAName: r.fromUsername || theirId, userB: myId, userBName: currentUsername, createdAt: serverTimestamp() });
+
+                await updateDoc(reqRef, { status: 'accepted' });
+                addSystemMessage('ЗАПРОС ПРИНЯТ', false);
+            } catch (e) { console.error('acceptFriendRequest', e); addSystemMessage('ОШИБКА', true); }
+        }
+
+        async function declineFriendRequest(requestId) {
+            try {
+                const reqRef = doc(db, 'artifacts', appId, 'public', 'data', 'friend_requests', requestId);
+                await updateDoc(reqRef, { status: 'declined' });
+                addSystemMessage('ЗАПРОС ОТКЛОНЕН', false);
+            } catch (e) { console.error('declineFriendRequest', e); addSystemMessage('ОШИБКА', true); }
+        }
+
+        function subscribeToFriendsList() {
+            try {
+                const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'friends'));
+                onSnapshot(q, (snapshot) => {
+                    const listEl = document.getElementById('friends-list');
+                    const sidebarUl = document.getElementById('text-channels');
+                    if (listEl) listEl.innerHTML = '';
+                    if (sidebarUl) sidebarUl.innerHTML = '';
+
+                    const myFriends = [];
+                    snapshot.forEach(docSnap => {
+                        const f = docSnap.data();
+                        const myId = accountSid || localSessionId;
+                        if (f.userA === myId) {
+                            myFriends.push({ sid: f.userB, name: f.userBName || f.userB });
+                        }
+                    });
+
+                    if (myFriends.length === 0) {
+                        if (sidebarUl) sidebarUl.innerHTML = '<li class="cursor-default p-2 text-xs opacity-60">Нет друзей — добавьте через панель ДРУЗЬЯ</li>';
+                        if (listEl) listEl.innerHTML = '<div class="text-xs opacity-60">У вас пока нет друзей</div>';
+                        return;
+                    }
+
+                    myFriends.forEach((fr) => {
+                        // friends panel entry
+                        if (listEl) {
+                            const row = document.createElement('div');
+                            row.className = 'flex justify-between items-center border border-green-800 p-2';
+                            row.innerHTML = `
+                                <div>
+                                    <div class="font-bold">${fr.name}</div>
+                                    <div class="text-xs opacity-70">SID: ${ (fr.sid || '').slice(0,8).toUpperCase() }</div>
+                                </div>
+                                <div class="space-x-2">
+                                    <button class="px-2 py-1 border border-green-600" onclick="sendCallRequest('${fr.sid}')">ЗВОНОК</button>
+                                    <button class="px-2 py-1 border border-gray-600" onclick="removeFriend('${fr.sid}')">Удалить</button>
+                                </div>
+                            `;
+                            listEl.appendChild(row);
+                        }
+
+                        // sidebar DM entry
+                        if (sidebarUl) {
+                            const li = document.createElement('li');
+                            li.className = 'cursor-pointer p-2 hover:bg-green-900/20 transition-all';
+                            li.dataset.channel = `dm:${fr.sid}`;
+                            li.textContent = `${fr.name}`;
+                            li.onclick = () => switchChannel(`dm:${fr.sid}`);
+                            sidebarUl.appendChild(li);
+                        }
+                    });
+                });
+            } catch(e) { console.error('subscribeToFriendsList', e); }
+        }
+
+        async function removeFriend(sid) {
+            try {
+                const friendsRef = collection(db, 'artifacts', appId, 'public', 'data', 'friends');
+                const myId = accountSid || localSessionId;
+                const q = query(friendsRef, where('userA', '==', myId), where('userB', '==', sid));
+                const snaps = await getDocs(q);
+                snaps.forEach(s => { deleteDoc(doc(friendsRef, s.id)).catch(()=>{}); });
+                addSystemMessage('ДРУГ УДАЛЕН', false);
+            } catch(e) { console.error('removeFriend', e); addSystemMessage('ОШИБКА', true); }
+        }
+
+        // --- CALLS ---
+        async function sendCallRequest(targetSessionId) {
+            if (!targetSessionId) return;
+            try {
+                const callsRef = collection(db, 'artifacts', appId, 'public', 'data', 'call_requests');
+                await addDoc(callsRef, {
+                    senderSessionId: localSessionId,
+                    senderAccountId: accountSid || null,
+                    senderUsername: currentUsername,
+                    targetSessionId: targetSessionId,
+                    targetAccountId: null,
+                    status: 'pending',
+                    timestamp: serverTimestamp()
+                });
+                addSystemMessage('ИНИЦИАТИВНЫЙ ЗВОНОК ОТПРАВЛЕН', false);
+            } catch(e) { console.error('sendCallRequest', e); addSystemMessage('ОШИБКА', true); }
+        }
+
+        function subscribeToIncomingCalls() {
+            try {
+                const handle = (snapshot) => {
+                    snapshot.forEach(docSnap => {
+                        const c = docSnap.data();
+                        showIncomingCallModal(docSnap.id, c.senderSessionId || c.senderAccountId, c.senderUsername);
+                    });
+                };
+
+                // subscribe to account-targeted (new) and session-targeted (legacy)
+                if (accountSid) {
+                    const q1 = query(collection(db, 'artifacts', appId, 'public', 'data', 'call_requests'), where('targetAccountId', '==', accountSid), where('status', '==', 'pending'));
+                    onSnapshot(q1, handle);
+                }
+                const q2 = query(collection(db, 'artifacts', appId, 'public', 'data', 'call_requests'), where('targetSessionId', '==', localSessionId), where('status', '==', 'pending'));
+                onSnapshot(q2, handle);
+            } catch(e) { console.error('subscribeToIncomingCalls', e); }
+        }
+
+        function showIncomingCallModal(requestId, senderSessionId, senderUsername) {
+            // single modal
+            let modal = document.getElementById('incoming-call-modal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'incoming-call-modal';
+                modal.className = 'fixed inset-0 z-60 hidden items-center justify-center bg-black/80';
+                modal.innerHTML = `
+                    <div class="w-96 bg-black p-4 border border-green-800">
+                        <div class="text-lg font-bold text-green-300 mb-2">ВХОДЯЩИЙ ЗВОНОК</div>
+                        <div id="incoming-call-info" class="mb-4 text-sm text-green-200"></div>
+                        <div class="flex justify-end space-x-2">
+                            <button id="decline-call-btn" class="px-3 py-1 border border-red-700">Отклонить</button>
+                            <button id="accept-call-btn" class="px-3 py-1 border border-green-600">Принять</button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+            }
+            document.getElementById('incoming-call-info').textContent = `${senderUsername} (${(senderSessionId||'').slice(0,8).toUpperCase()}) звонит вам`;
+            modal.classList.remove('hidden'); modal.classList.add('flex');
+
+            const acceptBtn = document.getElementById('accept-call-btn');
+            const declineBtn = document.getElementById('decline-call-btn');
+
+            const cleanup = () => {
+                modal.classList.remove('flex'); modal.classList.add('hidden');
+                acceptBtn.onclick = null; declineBtn.onclick = null;
+            };
+
+            acceptBtn.onclick = async () => {
+                try {
+                    const reqRef = doc(db, 'artifacts', appId, 'public', 'data', 'call_requests', requestId);
+                    await updateDoc(reqRef, { status: 'accepted' });
+                    // create a private temporary channel (use accountSid when available)
+                    const callerId = senderSessionId; // may be accountId or sessionId depending on what was passed
+                    const myId = accountSid || localSessionId;
+                    const channelName = `call-${[myId, callerId].sort().join('-')}`;
+                    // join voice with that channel
+                    joinVoice(channelName);
+                    cleanup();
+                } catch(e) { console.error('acceptCall', e); addSystemMessage('ОШИБКА', true); }
+            };
+
+            declineBtn.onclick = async () => {
+                try {
+                    const reqRef = doc(db, 'artifacts', appId, 'public', 'data', 'call_requests', requestId);
+                    await updateDoc(reqRef, { status: 'declined' });
+                    cleanup();
+                } catch(e) { console.error('declineCall', e); }
+            };
+        }
+
+        function subscribeToCallResponses() {
+            try {
+                const handle = (snapshot) => {
+                    snapshot.forEach(docSnap => {
+                        const c = docSnap.data();
+                        if (c.status === 'accepted') {
+                            const myId = accountSid || localSessionId;
+                            const theirId = c.targetAccountId || c.targetSessionId;
+                            const channelName = `call-${[myId, theirId].sort().join('-')}`;
+                            joinVoice(channelName);
+                            // cleanup request after short time
+                            setTimeout(() => { deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'call_requests', docSnap.id)).catch(()=>{}); }, 5000);
+                        } else if (c.status === 'declined') {
+                            addSystemMessage('ЗВОНОК ОТКЛОНЁН', false);
+                        }
+                    });
+                };
+
+                if (accountSid) {
+                    const q1 = query(collection(db, 'artifacts', appId, 'public', 'data', 'call_requests'), where('senderAccountId', '==', accountSid));
+                    onSnapshot(q1, handle);
+                }
+                const q2 = query(collection(db, 'artifacts', appId, 'public', 'data', 'call_requests'), where('senderSessionId', '==', localSessionId));
+                onSnapshot(q2, handle);
+            } catch(e) { console.error('subscribeToCallResponses', e); }
+        }
+
+        // --- SERVERS (простая реализация) ---
+        function initializeServersSystem() {
+            createServersButton();
+            createServersPanel();
+            subscribeToServers();
+        }
+
+        function createServersButton() {
+            const sidebarHeader = document.querySelector('#sidebar .p-3.border-b-2');
+            if (!sidebarHeader) return;
+            const btn = document.createElement('button');
+            btn.id = 'open-servers-btn';
+            btn.className = 'mt-2 text-yellow-400 hover:text-yellow-200 text-xs border border-yellow-800 px-2 py-0.5';
+            btn.textContent = 'СЕРВЕРА';
+            btn.onclick = toggleServersPanel;
+            sidebarHeader.appendChild(btn);
+        }
+
+        function createServersPanel() {
+            const panel = document.createElement('div');
+            panel.id = 'servers-panel';
+            panel.className = 'fixed inset-0 z-50 hidden items-center justify-center bg-black/90';
+            panel.innerHTML = `
+                <div class="w-11/12 max-w-2xl max-h-[90vh] overflow-y-auto border-2 border-yellow-600 bg-black/95 p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-bold text-yellow-400">>> УПРАВЛЕНИЕ СЕРВЕРАМИ</h2>
+                        <button onclick="toggleServersPanel()" class="text-yellow-500">[ X ]</button>
+                    </div>
+
+                    <div class="h-px w-full bg-yellow-900 mb-4"></div>
+
+                    <div class="mb-4">
+                        <h3 class="text-sm text-yellow-300 mb-2">Создать сервер</h3>
+                        <input id="server-name-input" class="w-full bg-black border border-yellow-800 p-2 mb-2" placeholder="Название сервера" />
+                        <div class="flex space-x-2">
+                            <input id="server-text-channel-input" class="flex-1 bg-black border border-yellow-800 p-2" placeholder="Текстовый канал (например: general)" />
+                            <input id="server-voice-channel-input" class="flex-1 bg-black border border-yellow-800 p-2" placeholder="Голосовой канал (например: vc1)" />
+                        </div>
+                        <div class="flex justify-end mt-2"><button class="px-4 py-2 border border-yellow-600" onclick="createServer()">СОЗДАТЬ</button></div>
+                    </div>
+
+                    <div class="mb-4">
+                        <h3 class="text-sm text-yellow-300 mb-2">Мои серверы</h3>
+                        <div id="servers-list" class="space-y-2 text-yellow-200"></div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(panel);
+        }
+
+        window.toggleServersPanel = function() { const p = document.getElementById('servers-panel'); if (!p) return; const open = p.classList.contains('hidden'); if (open) { p.classList.remove('hidden'); p.classList.add('flex'); } else { p.classList.remove('flex'); p.classList.add('hidden'); } }
+
+        async function createServer() {
+            const name = document.getElementById('server-name-input').value.trim();
+            const textChan = document.getElementById('server-text-channel-input').value.trim() || 'general';
+            const voiceChan = document.getElementById('server-voice-channel-input').value.trim() || 'vc1';
+            if (!name) { addSystemMessage('Введите имя сервера', true); return; }
+            try {
+                const serversRef = collection(db, 'artifacts', appId, 'public', 'data', 'servers');
+                const docRef = await addDoc(serversRef, {
+                    name, owner: currentUsername, ownerSession: localSessionId, ownerAccount: accountSid || null, createdAt: serverTimestamp(), channels: { text: [textChan], voice: [voiceChan] }
+                });
+                addSystemMessage('СЕРВЕР СОЗДАН', false);
+                document.getElementById('server-name-input').value = ''; document.getElementById('server-text-channel-input').value = ''; document.getElementById('server-voice-channel-input').value = '';
+            } catch(e) { console.error('createServer', e); addSystemMessage('ОШИБКА СОЗДАНИЯ', true); }
+        }
+
+        function subscribeToServers() {
+            try {
+                const q = collection(db, 'artifacts', appId, 'public', 'data', 'servers');
+                onSnapshot(q, (snapshot) => {
+                    const list = document.getElementById('servers-list');
+                    const sidebarText = document.getElementById('text-channels');
+                    if (list) list.innerHTML = '';
+                    snapshot.forEach(docSnap => {
+                        const s = docSnap.data();
+                        const id = docSnap.id;
+                        if (list) {
+                            const row = document.createElement('div');
+                            row.className = 'p-2 border border-yellow-800 flex justify-between items-center';
+                            row.innerHTML = `<div><div class='font-bold'>${s.name}</div><div class='text-xs opacity-60'>${s.owner}</div></div><div><button class='px-2 py-1 border border-yellow-600' onclick="openServerModal('${id}')">ОТКРЫТЬ</button></div>`;
+                            list.appendChild(row);
+                        }
+                    });
+                });
+            } catch(e) { console.error('subscribeToServers', e); }
+        }
+
+            // Open a server management modal
+            async function openServerModal(serverId) {
+                try {
+                    const sRef = doc(db, 'artifacts', appId, 'public', 'data', 'servers', serverId);
+                    const sSnap = await getDoc(sRef);
+                    if (!sSnap.exists()) { addSystemMessage('СЕРВЕР НЕ НАЙДЕН', true); return; }
+                    const s = sSnap.data();
+
+                    // create modal
+                    let modal = document.getElementById('server-modal');
+                    if (!modal) {
+                        modal = document.createElement('div');
+                        modal.id = 'server-modal';
+                        modal.className = 'fixed inset-0 z-60 hidden items-center justify-center bg-black/85';
+                        modal.innerHTML = `
+                            <div class="w-11/12 max-w-2xl bg-black p-4 border border-yellow-700">
+                                <div class="flex justify-between items-center mb-3">
+                                    <div>
+                                        <div id="server-modal-name" class="font-bold text-yellow-300"></div>
+                                        <div id="server-modal-owner" class="text-xs opacity-60"></div>
+                                    </div>
+                                    <button id="server-modal-close" class="text-yellow-500">[ X ]</button>
+                                </div>
+                                <div class="h-px w-full bg-yellow-900 mb-3"></div>
+                                <div id="server-modal-channels" class="mb-3 text-yellow-200"></div>
+                                <div id="server-modal-members" class="mb-3 text-yellow-200"></div>
+                                <div class="mb-3">
+                                    <div class="text-sm text-yellow-300 mb-1">Добавить участника по SID или нику</div>
+                                    <div class="flex space-x-2">
+                                        <input id="server-add-sid-input" class="flex-1 bg-black border border-yellow-800 p-2" placeholder="введите SID (первые 8 символов) или ник" />
+                                        <button id="server-add-sid-btn" class="px-3 py-2 border border-yellow-600">ДОБАВИТЬ</button>
+                                    </div>
+                                </div>
+                                <div class="flex justify-end"><button id="server-modal-close-2" class="px-3 py-1 border border-yellow-600">Закрыть</button></div>
+                            </div>
+                        `;
+                        document.body.appendChild(modal);
+                    }
+
+                    // populate
+                    document.getElementById('server-modal-name').textContent = s.name;
+                    document.getElementById('server-modal-owner').textContent = `Владелец: ${s.owner}`;
+                    document.getElementById('server-modal-channels').innerHTML = `<div class="font-semibold">Каналы:</div><div class="text-xs">Текст: ${ (s.channels && s.channels.text || []).join(', ') }</div><div class="text-xs">Голос: ${ (s.channels && s.channels.voice || []).join(', ') }</div>`;
+
+                    const membersEl = document.getElementById('server-modal-members');
+                    const members = s.members || [];
+                    membersEl.innerHTML = `<div class="font-semibold">Участники (${members.length}):</div>` + (members.length ? members.map(m => `<div class="text-xs">${m.username} (${(m.accountId||m.sessionId||'').slice(0,8).toUpperCase()})</div>`).join('') : '<div class="text-xs opacity-60">Нет участников</div>');
+
+                    // handlers
+                    const close = () => { modal.classList.remove('flex'); modal.classList.add('hidden'); };
+                    modal.classList.remove('hidden'); modal.classList.add('flex');
+                    document.getElementById('server-modal-close').onclick = close;
+                    document.getElementById('server-modal-close-2').onclick = close;
+
+                    document.getElementById('server-add-sid-btn').onclick = async () => {
+                        const v = document.getElementById('server-add-sid-input').value.trim();
+                        if (!v) { addSystemMessage('Введите SID или ник', true); return; }
+                        await addMemberToServer(serverId, v);
+                        // refresh view
+                        const refreshed = await getDoc(sRef);
+                        const s2 = refreshed.data();
+                        const members2 = s2.members || [];
+                        membersEl.innerHTML = `<div class="font-semibold">Участники (${members2.length}):</div>` + (members2.length ? members2.map(m => `<div class="text-xs">${m.username} (${(m.accountId||m.sessionId||'').slice(0,8).toUpperCase()})</div>`).join('') : '<div class="text-xs opacity-60">Нет участников</div>');
+                        document.getElementById('server-add-sid-input').value = '';
+                    };
+
+                } catch(e) { console.error('openServerModal', e); addSystemMessage('ОШИБКА ОТКРЫТИЯ СЕРВЕРА', true); }
+            }
+
+            // Add member to server by searching users collection for matching accountSid prefix or username
+            async function addMemberToServer(serverId, sidOrName) {
+                try {
+                    const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'app_users');
+                    const snaps = await getDocs(usersRef);
+                    let found = null;
+                    const needle = sidOrName.toLowerCase();
+                    snaps.forEach(ds => {
+                        const ud = ds.data();
+                        const acct = (ud.accountSid || '').toLowerCase();
+                        const sess = (ud.sessionId || '').toLowerCase();
+                        const uname = (ud.username || '').toLowerCase();
+                        if (acct && acct.startsWith(needle)) found = { accountId: ud.accountSid, sessionId: ud.sessionId, username: ud.username };
+                        else if (sess && sess.startsWith(needle)) found = { accountId: ud.accountSid, sessionId: ud.sessionId, username: ud.username };
+                        else if (uname === needle) found = { accountId: ud.accountSid, sessionId: ud.sessionId, username: ud.username };
+                    });
+
+                    if (!found) { addSystemMessage('ПОЛЬЗОВАТЕЛЬ НЕ НАЙДЕН', true); return; }
+
+                    const sRef = doc(db, 'artifacts', appId, 'public', 'data', 'servers', serverId);
+                    const sSnap = await getDoc(sRef);
+                    if (!sSnap.exists()) { addSystemMessage('СЕРВЕР НЕ НАЙДЕН', true); return; }
+                    const s = sSnap.data();
+                    const members = s.members || [];
+                    const idToCheck = found.accountId || found.sessionId;
+                    if (members.find(m => (m.accountId||m.sessionId) === idToCheck)) { addSystemMessage('ПОЛЬЗОВАТЕЛЬ УЖЕ В СЕРВЕРЕ', true); return; }
+
+                    members.push({ accountId: found.accountId || null, sessionId: found.sessionId || null, username: found.username || 'UNKNOWN' });
+                    await updateDoc(sRef, { members });
+                    addSystemMessage('ПОЛЬЗОВАТЕЛЬ ДОБАВЛЕН В СЕРВЕР', false);
+                } catch(e) { console.error('addMemberToServer', e); addSystemMessage('ОШИБКА ДОБАВЛЕНИЯ', true); }
+            }
+
+        async function openServer(serverId) {
+            try {
+                const ref = doc(db, 'artifacts', appId, 'public', 'data', 'servers', serverId);
+                const s = await getDoc(ref);
+                if (!s.exists()) return;
+                const data = s.data();
+                // populate text channels in sidebar
+                const ul = document.getElementById('text-channels');
+                ul.innerHTML = '';
+                (data.channels.text || []).forEach(tc => {
+                    const li = document.createElement('li');
+                    li.className = 'cursor-pointer p-2 hover:bg-green-900/20 transition-all';
+                    li.textContent = `# ${tc}`;
+                    li.onclick = () => switchChannel(`${serverId}:${tc}`);
+                    ul.appendChild(li);
+                });
+                addSystemMessage(`ОТКРЫТ СЕРВЕР: ${data.name}`, false);
+                toggleServersPanel();
+            } catch(e) { console.error('openServer', e); }
+        }
+
+        // ensure friends and servers initialized after login
+        // (grantAccess вызывает initializePluginsSystem etc.)
 
         // --- ЧАСТЬ 2: НАСТРОЙКИ ПОЛЬЗОВАТЕЛЯ ---
         function initializeSettingsSystem() {
@@ -2280,6 +2915,7 @@ body {
                 await setDoc(doc(voiceRef(voiceId), localSessionId), {
                     username: currentUsername,
                     sessionId: localSessionId,
+                    accountId: accountSid || null,
                     uid: currentUser.uid, 
                     joinedAt: serverTimestamp(),
                     isMicMuted: false
@@ -2368,7 +3004,7 @@ body {
                 snapshot.forEach(doc => {
                     const userData = doc.data();
                     if (userData.sessionId !== localSessionId) { 
-                        users.push({ username: userData.username, sessionId: userData.sessionId });
+                        users.push({ username: userData.username, sessionId: userData.sessionId, accountId: userData.accountId || null });
                         activePeers.add(userData.sessionId);
                         
                         const pc = peerConnections[userData.sessionId];
@@ -2396,7 +3032,12 @@ body {
                     }
                 });
                 
-                const usersHtml = users.map(u => `<div class="text-green-300" data-session-id="${u.sessionId}">>> ${u.username}</div>`).join('');
+                const usersHtml = users.map(u => `
+                    <div class="text-green-300 flex items-center justify-between" data-session-id="${u.sessionId}">
+                        <span class="mr-2">>> ${u.username} <span class="text-xs opacity-60">(${((u.accountId||u.sessionId)||'').slice(0,8).toUpperCase()})</span></span>
+                        <button class="ml-2 text-xs border border-green-700 px-1" onclick="sendFriendRequestToSession('${u.accountId||u.sessionId}','${u.username}')">➕</button>
+                    </div>
+                `).join('');
                 const voiceLi = document.querySelector(`li[data-voice="${voiceId}"]`);
                 if (voiceLi) {
                     voiceLi.querySelector('.voice-users').innerHTML = usersHtml;
@@ -3402,9 +4043,8 @@ body {
                 <div class="mb-8">
                     <h3 class="text-xs font-bold opacity-60 mb-3 tracking-widest border-b border-green-900/50 pb-1">TEXT_PROTOCOLS</h3>
                     <ul id="text-channels" class="space-y-1">
-                        <li onclick="switchChannel('main')" class="cursor-pointer p-2 hover:bg-green-900/20 transition-all channel-active" data-channel="main"># MAIN_HUB</li>
-                        <li onclick="switchChannel('offtopic')" class="cursor-pointer p-2 hover:bg-green-900/20 transition-all" data-channel="offtopic"># OFFTOPIC</li>
-                        <li onclick="switchChannel('dev')" class="cursor-pointer p-2 hover:bg-green-900/20 transition-all" data-channel="dev"># DEV_LOGS</li>
+                        <!-- Список текстовых каналов заменяется списком друзей после входа -->
+                        <li class="cursor-default p-2 text-xs opacity-60">Список личных чатов появится здесь</li>
                     </ul>
                 </div>
 
@@ -3412,13 +4052,7 @@ body {
                 <div>
                     <h3 class="text-xs font-bold opacity-60 mb-3 tracking-widest border-b border-green-900/50 pb-1">VOICE_UPLINKS</h3>
                     <ul id="voice-channels" class="space-y-2">
-                        <li onclick="handleVoiceAction('lobby')" class="cursor-pointer border border-green-900/50 p-2 hover:border-green-500 transition-all group" data-voice="lobby">
-                            <div class="flex justify-between items-center">
-                                <span>LOBBY</span>
-                                <span class="voice-count text-[10px] bg-green-900 px-1 text-black group-hover:bg-green-500">1</span>
-                            </div>
-                            <div class="voice-users mt-1 pl-2 text-xs opacity-80 border-l border-green-800 ml-1"></div>
-                        </li>
+                        <!-- Голосовые каналы по-умолчанию удалены. Используйте серверы или приватные звонки. -->
                     </ul>
                     
                     <div id="voice-status-panel" class="hidden mt-6 bg-green-900/10 border border-green-500 p-3">
