@@ -12,12 +12,12 @@ body {
     font-family: 'VT323', monospace;
     overflow: hidden;
     text-shadow: 0 0 3px var(--terminal-glow);
-    font-size: 1.1rem; 
+    font-size: 1.1rem;
 }
 
 @media (min-width: 768px) {
     body {
-        font-size: 1.25rem; 
+        font-size: 1.25rem;
     }
 }
 
@@ -99,7 +99,7 @@ body.theme-red .system-msg { color: #aa8888; }
     left: 24px;
     right: 24px;
     z-index: 900;
-    pointer-events: none; 
+    pointer-events: none;
 }
 .notification-item {
     background-color: rgba(0, 50, 0, 0.8);
@@ -147,7 +147,7 @@ body.theme-red .notification-item {
     min-height: 150px;
     max-width: 90vw;
     max-height: 90vh;
-    resize: none !important; /* Отключаем стандартный resize */
+    resize: none !important;
     overflow: hidden;
 }
 
@@ -190,7 +190,6 @@ body.theme-red .floating-window .drag-handle {
     background: black;
 }
 
-/* Стили для изменения размера */
 .resize-handle {
     touch-action: none;
     z-index: 1000;
@@ -202,7 +201,6 @@ body.theme-red .floating-window .drag-handle {
     opacity: 1;
 }
 
-/* Голосовые сообщения */
 .voice-message {
     transition: all 0.3s ease;
     max-width: 400px;
@@ -225,7 +223,6 @@ body.theme-red .voice-message:hover {
     background-color: rgba(255, 100, 100, 0.1) !important;
 }
 
-/* Визуализатор голоса */
 #voice-visualizer {
     transition: all 0.1s ease;
 }
@@ -238,7 +235,6 @@ body.theme-red .voice-message:hover {
     min-width: 80px;
 }
 
-/* Rainbow mode - ИСПРАВЛЕННЫЙ! */
 .rainbow-mode {
     animation: rainbow-bg 10s linear infinite !important;
 }
@@ -269,7 +265,6 @@ body.theme-red .voice-message:hover {
     100% { color: #ff0000 !important; text-shadow: 0 0 5px #ff0000 !important; }
 }
 
-/* Радужные границы в радужном режиме */
 .rainbow-mode .border-green-800,
 .rainbow-mode .border-green-700,
 .rainbow-mode .border-green-600,
@@ -282,7 +277,6 @@ body.theme-red .voice-message:hover {
     box-shadow: 0 0 10px currentColor !important;
 }
 
-/* Радужные кнопки */
 .rainbow-mode button {
     background-color: transparent !important;
     border-color: currentColor !important;
@@ -294,7 +288,6 @@ body.theme-red .voice-message:hover {
     color: #000 !important;
 }
 
-/* Для радужного режима - голосовые сообщения */
 .rainbow-mode .voice-message {
     border-color: currentColor !important;
     background-color: rgba(255, 255, 255, 0.05) !important;
@@ -308,7 +301,6 @@ body.theme-red .voice-message:hover {
     background-color: currentColor !important;
 }
 
-/* Стили для плагинов */
 .plugin-style {
     position: fixed;
     top: -9999px;
@@ -317,7 +309,6 @@ body.theme-red .voice-message:hover {
     z-index: -1;
 }
 
-/* Улучшенная поддержка тач-устройств */
 @media (hover: none) and (pointer: coarse) {
     .floating-window {
         min-width: 300px;
@@ -336,7 +327,6 @@ body.theme-red .voice-message:hover {
     }
 }
 
-/* Анимация для кнопки плагинов */
 #plugins-button:hover {
     animation: pulse-purple 0.5s infinite alternate;
 }
@@ -346,7 +336,6 @@ body.theme-red .voice-message:hover {
     to { transform: scale(1.2); }
 }
 
-/* Новые стили для ограничения размеров панелей */
 .admin-panel-container {
     max-height: 90vh !important;
     overflow-y: auto !important;
@@ -369,7 +358,6 @@ body.theme-red .voice-message:hover {
     background: #666666;
 }
 
-/* Для Firefox */
 .admin-panel-container {
     scrollbar-width: thin;
     scrollbar-color: #444 #000;
