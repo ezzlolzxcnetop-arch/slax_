@@ -6,6 +6,9 @@
     <title>SLAX_TERMINAL_V5</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron&display=swap" rel="stylesheet">
     
     <!-- Используем CDN версии для работы в браузере без сборщика -->
     <script type="module">
@@ -94,6 +97,71 @@
         let dataArray = null;
         let animationFrame = null;
 
+        // Система плагинов
+        let userPlugins = {};
+        let activePlugins = {};
+        const availablePlugins = {
+            'font-jetbrains': {
+                name: 'JetBrains Mono Font',
+                type: 'font',
+                css: `
+                    body, .font-mono { 
+                        font-family: 'JetBrains Mono', monospace !important; 
+                        font-size: 0.95rem;
+                    }
+                `,
+                description: 'Чистый моноширинный шрифт JetBrains Mono'
+            },
+            'font-orbitron': {
+                name: 'Orbitron Font',
+                type: 'font',
+                css: `
+                    body, .font-mono { 
+                        font-family: 'Orbitron', sans-serif !important; 
+                        letter-spacing: 0.5px;
+                        font-weight: 400;
+                    }
+                    input, button { font-family: 'Orbitron', sans-serif !important; }
+                `,
+                description: 'Футуристический шрифт Orbitron'
+            },
+            'theme-matrix': {
+                name: 'Matrix Theme',
+                type: 'theme',
+                css: `
+                    :root { 
+                        --terminal-color: #00ff00 !important; 
+                        --terminal-glow: #00ff00 !important;
+                        --terminal-bg: #001100 !important;
+                        --scanline: rgba(0, 255, 0, 0.08) !important;
+                    }
+                    body { text-shadow: 0 0 8px #00ff00 !important; }
+                    .border-green-800 { border-color: #003300 !important; }
+                    .bg-green-900\\/10 { background-color: rgba(0, 30, 0, 0.2) !important; }
+                `,
+                description: 'Стиль Matrix (зелёный на чёрном)'
+            },
+            'theme-cyberpunk': {
+                name: 'Cyberpunk Theme',
+                type: 'theme',
+                css: `
+                    :root { 
+                        --terminal-color: #ff00ff !important; 
+                        --terminal-glow: #ff00ff !important;
+                        --terminal-bg: #0a001a !important;
+                        --scanline: rgba(255, 0, 255, 0.06) !important;
+                    }
+                    body { text-shadow: 0 0 8px #ff00ff !important; }
+                    .border-green-800 { border-color: #660066 !important; }
+                    .bg-green-900\\/10 { background-color: rgba(80, 0, 80, 0.2) !important; }
+                    .text-green-500 { color: #ff00ff !important; }
+                    .text-green-400 { color: #ff66ff !important; }
+                    .text-green-300 { color: #ff99ff !important; }
+                `,
+                description: 'Киберпанк стиль (розовый на тёмном)'
+            }
+        };
+
         // --- DOM ЭЛЕМЕНТЫ ---
         const loginScreen = document.getElementById('login-screen');
         const mainInterface = document.getElementById('main-interface');
@@ -127,6 +195,8 @@
         let voiceRecordingPanel = null;
         let voiceVisualizer = null;
         let backgroundMusic = null;
+        let pluginsButton = null;
+        let pluginsPanel = null;
 
         // --- ЛОГИКА АДАПТИВНОСТИ ---
         window.toggleSidebar = function() {
@@ -236,6 +306,12 @@
                         userSettings = { ...userSettings, ...userData.settings };
                     }
                     
+                    // Загружаем плагины пользователя если есть
+                    if (userData.plugins) {
+                        userPlugins = userData.plugins;
+                        applyUserPlugins();
+                    }
+                    
                     grantAccess();
                 } else {
                     loginError.textContent = "ОШИБКА: ПАРОЛЬ НЕВЕРЕН.";
@@ -271,6 +347,7 @@
                     username: name,
                     password: password,
                     settings: userSettings,
+                    plugins: userPlugins,
                     createdAt: serverTimestamp()
                 });
                 
@@ -298,12 +375,345 @@
             // Инициализация системы голосовых сообщений
             initializeVoiceMessagesSystem();
             
+            // Инициализация системы плагинов
+            initializePluginsSystem();
+            
             // Применяем сохраненную тему
             applyTheme(userSettings.theme);
             
             switchChannel(currentChannel); // Инициировать подписку на сообщения и обновить UI
             messageInput.focus();
             playTone(800, 0.1); 
+        }
+
+        // --- СИСТЕМА ПЛАГИНОВ ---
+        function initializePluginsSystem() {
+            createPluginsButton();
+            createPluginsPanel();
+            applyUserPlugins();
+        }
+        
+        function createPluginsButton() {
+            // Добавляем кнопку плагинов в сайдбар
+            const userInfo = document.querySelector('.p-3.border-t-2.border-green-900');
+            if (!userInfo) return;
+            
+            pluginsButton = document.createElement('button');
+            pluginsButton.id = 'plugins-button';
+            pluginsButton.className = 'mr-2 text-purple-500 hover:text-purple-300 transition-colors text-sm';
+            pluginsButton.innerHTML = '🧩';
+            pluginsButton.title = 'Плагины';
+            pluginsButton.onclick = togglePluginsPanel;
+            
+            // Вставляем после кнопки настроек
+            if (settingsButton) {
+                settingsButton.after(pluginsButton);
+            } else {
+                const userContainer = userInfo.querySelector('.flex.items-center');
+                if (userContainer) {
+                    userContainer.insertBefore(pluginsButton, userContainer.firstChild);
+                }
+            }
+        }
+        
+        function createPluginsPanel() {
+            // Создаем панель плагинов
+            pluginsPanel = document.createElement('div');
+            pluginsPanel.id = 'plugins-panel';
+            pluginsPanel.className = 'fixed inset-0 z-50 hidden flex items-center justify-center bg-black/90';
+            pluginsPanel.innerHTML = `
+                <div class="w-11/12 max-w-3xl max-h-[90vh] overflow-y-auto border-2 border-purple-600 bg-black/95 p-6 shadow-[0_0_30px_rgba(128,0,255,0.5)]">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-bold text-purple-400">
+                            >> СИСТЕМА ПЛАГИНОВ
+                        </h2>
+                        <button onclick="togglePluginsPanel()" class="text-purple-500 hover:text-purple-300 text-lg">[ X ]</button>
+                    </div>
+                    
+                    <div class="h-px w-full bg-purple-900 mb-6"></div>
+                    
+                    <!-- ДОСТУПНЫЕ ПЛАГИНЫ -->
+                    <div class="mb-8">
+                        <h3 class="text-lg font-bold text-purple-300 mb-4 border-b border-purple-800 pb-2">
+                            ДОСТУПНЫЕ ПЛАГИНЫ
+                        </h3>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="p-4 border-2 border-purple-800 rounded-lg">
+                                <div class="flex justify-between items-center mb-2">
+                                    <h4 class="font-bold text-purple-300">JetBrains Mono Font</h4>
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" id="plugin-font-jetbrains" class="sr-only peer">
+                                        <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                                    </label>
+                                </div>
+                                <p class="text-sm text-purple-600 mb-3">Чистый моноширинный шрифт JetBrains Mono</p>
+                                <div class="text-xs text-purple-700">Тип: Шрифт</div>
+                            </div>
+                            
+                            <div class="p-4 border-2 border-purple-800 rounded-lg">
+                                <div class="flex justify-between items-center mb-2">
+                                    <h4 class="font-bold text-purple-300">Orbitron Font</h4>
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" id="plugin-font-orbitron" class="sr-only peer">
+                                        <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                                    </label>
+                                </div>
+                                <p class="text-sm text-purple-600 mb-3">Футуристический шрифт Orbitron</p>
+                                <div class="text-xs text-purple-700">Тип: Шрифт</div>
+                            </div>
+                            
+                            <div class="p-4 border-2 border-purple-800 rounded-lg">
+                                <div class="flex justify-between items-center mb-2">
+                                    <h4 class="font-bold text-purple-300">Matrix Theme</h4>
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" id="plugin-theme-matrix" class="sr-only peer">
+                                        <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                                    </label>
+                                </div>
+                                <p class="text-sm text-purple-600 mb-3">Стиль Matrix (зелёный на чёрном)</p>
+                                <div class="text-xs text-purple-700">Тип: Тема</div>
+                            </div>
+                            
+                            <div class="p-4 border-2 border-purple-800 rounded-lg">
+                                <div class="flex justify-between items-center mb-2">
+                                    <h4 class="font-bold text-purple-300">Cyberpunk Theme</h4>
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" id="plugin-theme-cyberpunk" class="sr-only peer">
+                                        <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                                    </label>
+                                </div>
+                                <p class="text-sm text-purple-600 mb-3">Киберпанк стиль (розовый на тёмном)</p>
+                                <div class="text-xs text-purple-700">Тип: Тема</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- ЗАГРУЗКА СВОЕГО ПЛАГИНА -->
+                    <div class="mb-8">
+                        <h3 class="text-lg font-bold text-purple-300 mb-4 border-b border-purple-800 pb-2">
+                            ЗАГРУЗКА СВОЕГО ПЛАГИНА
+                        </h3>
+                        
+                        <div class="p-4 border-2 border-purple-800 rounded-lg">
+                            <div class="mb-4">
+                                <label class="block text-purple-400 mb-2">Название плагина:</label>
+                                <input type="text" id="plugin-name" class="w-full bg-black border border-purple-700 text-purple-300 p-2 rounded" placeholder="Мой крутой плагин">
+                            </div>
+                            
+                            <div class="mb-4">
+                                <label class="block text-purple-400 mb-2">CSS код:</label>
+                                <textarea id="plugin-css" class="w-full h-40 bg-black border border-purple-700 text-purple-300 p-2 rounded font-mono text-sm" placeholder="/* Ваш CSS код здесь */
+body { 
+    font-family: 'Arial', sans-serif;
+    color: #00ff00;
+}"></textarea>
+                            </div>
+                            
+                            <div class="flex justify-between items-center">
+                                <div>
+                                    <label class="text-sm text-purple-600">
+                                        <input type="checkbox" id="plugin-keep-after-logout" class="mr-2">
+                                        Сохранять после выхода
+                                    </label>
+                                </div>
+                                
+                                <div class="space-x-2">
+                                    <button onclick="testPlugin()" class="px-4 py-2 border border-purple-600 bg-purple-900/30 hover:bg-purple-700 transition-colors text-sm">
+                                        ТЕСТ
+                                    </button>
+                                    <button onclick="saveCustomPlugin()" class="px-4 py-2 border border-purple-600 bg-purple-900/30 hover:bg-purple-700 transition-colors text-sm">
+                                        СОХРАНИТЬ
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="h-px w-full bg-purple-900 mt-6 mb-4"></div>
+                    
+                    <div class="flex justify-between">
+                        <button onclick="savePluginSettings()" 
+                            class="px-6 py-2 border border-purple-600 bg-purple-900/30 hover:bg-purple-700 hover:text-black transition-colors font-bold">
+                            СОХРАНИТЬ НАСТРОЙКИ
+                        </button>
+                        <button onclick="togglePluginsPanel()" 
+                            class="px-6 py-2 border border-gray-600 hover:bg-gray-800 transition-colors">
+                            ОТМЕНА
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(pluginsPanel);
+            
+            // Инициализация переключателей плагинов
+            updatePluginSwitches();
+            
+            // Добавляем обработчики для переключателей
+            document.querySelectorAll('#plugins-panel input[type="checkbox"][id^="plugin-"]').forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    const pluginId = this.id.replace('plugin-', '');
+                    if (availablePlugins[pluginId]) {
+                        if (this.checked) {
+                            activatePlugin(pluginId);
+                        } else {
+                            deactivatePlugin(pluginId);
+                        }
+                    }
+                });
+            });
+        }
+        
+        window.togglePluginsPanel = function() {
+            if (!pluginsPanel) return;
+            
+            const isOpen = pluginsPanel.classList.contains('hidden');
+            if (isOpen) {
+                pluginsPanel.classList.remove('hidden');
+                pluginsPanel.classList.add('flex');
+                updatePluginSwitches();
+                playTone(1200, 0.1);
+            } else {
+                pluginsPanel.classList.remove('flex');
+                pluginsPanel.classList.add('hidden');
+                playTone(800, 0.1);
+            }
+        }
+        
+        function updatePluginSwitches() {
+            for (const pluginId in availablePlugins) {
+                const checkbox = document.getElementById(`plugin-${pluginId}`);
+                if (checkbox) {
+                    checkbox.checked = userPlugins[pluginId] === true;
+                }
+            }
+        }
+        
+        function applyUserPlugins() {
+            // Удаляем все старые плагины
+            document.querySelectorAll('.plugin-style').forEach(el => el.remove());
+            
+            // Применяем активные плагины
+            for (const pluginId in userPlugins) {
+                if (userPlugins[pluginId] && availablePlugins[pluginId]) {
+                    activatePlugin(pluginId, true);
+                }
+            }
+        }
+        
+        function activatePlugin(pluginId, skipSave = false) {
+            if (!availablePlugins[pluginId]) return;
+            
+            const plugin = availablePlugins[pluginId];
+            
+            // Создаем стиль для плагина
+            const style = document.createElement('style');
+            style.className = 'plugin-style';
+            style.id = `plugin-${pluginId}`;
+            style.textContent = plugin.css;
+            document.head.appendChild(style);
+            
+            // Добавляем в активные плагины
+            activePlugins[pluginId] = true;
+            
+            // Сохраняем в настройки пользователя
+            if (!skipSave) {
+                userPlugins[pluginId] = true;
+                savePluginSettings();
+            }
+            
+            addSystemMessage(`ПЛАГИН "${plugin.name}" АКТИВИРОВАН`, false);
+        }
+        
+        function deactivatePlugin(pluginId) {
+            // Удаляем стиль плагина
+            const style = document.getElementById(`plugin-${pluginId}`);
+            if (style) style.remove();
+            
+            // Удаляем из активных плагинов
+            delete activePlugins[pluginId];
+            
+            // Обновляем настройки пользователя
+            userPlugins[pluginId] = false;
+            savePluginSettings();
+            
+            addSystemMessage(`ПЛАГИН "${availablePlugins[pluginId]?.name}" ОТКЛЮЧЕН`, false);
+        }
+        
+        window.testPlugin = function() {
+            const css = document.getElementById('plugin-css').value;
+            if (!css.trim()) {
+                addSystemMessage("ВВЕДИТЕ CSS КОД", true);
+                return;
+            }
+            
+            // Создаем временный стиль для теста
+            const tempStyle = document.createElement('style');
+            tempStyle.id = 'plugin-test';
+            tempStyle.textContent = css;
+            document.head.appendChild(tempStyle);
+            
+            addSystemMessage("ПЛАГИН ПРОТЕСТИРОВАН (будет удален через 10 секунд)", false);
+            
+            setTimeout(() => {
+                const style = document.getElementById('plugin-test');
+                if (style) style.remove();
+                addSystemMessage("ТЕСТОВЫЙ ПЛАГИН УДАЛЕН", false);
+            }, 10000);
+        }
+        
+        window.saveCustomPlugin = async function() {
+            const name = document.getElementById('plugin-name').value.trim();
+            const css = document.getElementById('plugin-css').value.trim();
+            const keepAfterLogout = document.getElementById('plugin-keep-after-logout').checked;
+            
+            if (!name || !css) {
+                addSystemMessage("ЗАПОЛНИТЕ ВСЕ ПОЛЯ", true);
+                return;
+            }
+            
+            const pluginId = 'custom-' + Date.now();
+            
+            // Сохраняем в локальное хранилище
+            const customPlugins = JSON.parse(localStorage.getItem('slax_custom_plugins') || '{}');
+            customPlugins[pluginId] = {
+                name: name,
+                css: css,
+                keepAfterLogout: keepAfterLogout
+            };
+            localStorage.setItem('slax_custom_plugins', JSON.stringify(customPlugins));
+            
+            // Применяем плагин
+            const style = document.createElement('style');
+            style.className = 'plugin-style';
+            style.id = `plugin-${pluginId}`;
+            style.textContent = css;
+            document.head.appendChild(style);
+            
+            addSystemMessage(`СОБСТВЕННЫЙ ПЛАГИН "${name}" СОХРАНЕН`, false);
+            
+            // Очищаем поля
+            document.getElementById('plugin-name').value = '';
+            document.getElementById('plugin-css').value = '';
+        }
+        
+        window.savePluginSettings = async function() {
+            try {
+                const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'app_users');
+                const userDocRef = doc(usersRef, currentUsername);
+                
+                await updateDoc(userDocRef, {
+                    plugins: userPlugins
+                });
+                
+                addSystemMessage("НАСТРОЙКИ ПЛАГИНОВ СОХРАНЕНЫ", false);
+                playTone(1000, 0.1);
+                
+            } catch (error) {
+                console.error("Ошибка сохранения плагинов:", error);
+                addSystemMessage("ОШИБКА СОХРАНЕНИЯ ПЛАГИНОВ", true);
+            }
         }
 
         // --- ЧАСТЬ 2: НАСТРОЙКИ ПОЛЬЗОВАТЕЛЯ ---
@@ -868,7 +1278,8 @@
                         createdAt: serverTimestamp(),
                         createdBy: currentUsername,
                         lastUpdated: serverTimestamp(),
-                        updatedBy: currentUsername
+                        updatedBy: currentUsername,
+                        sessionId: localSessionId
                     });
                     addSystemMessage("ДОКУМЕНТ СОБЫТИЙ СОЗДАН", false);
                 } else {
@@ -895,9 +1306,27 @@
                     const data = docSnap.data();
                     console.log("Получены события:", data);
                     
+                    const wasRainbowActive = isRainbowEventActive;
+                    const wasSilentActive = isSilentEventActive;
+                    const wasMusicActive = isMusicEventActive;
+                    
                     isRainbowEventActive = data.rainbow === true;
                     isSilentEventActive = data.silent === true;
                     isMusicEventActive = data.music === true;
+                    
+                    // Показываем уведомления только админу (WINTER) и только если событие действительно изменилось
+                    // и изменение пришло из другой сессии (чтобы избежать двойных уведомлений)
+                    if (currentUsername === 'WINTER' && data.sessionId !== localSessionId) {
+                        if (wasRainbowActive !== isRainbowEventActive) {
+                            addSystemMessage(`RAINBOW MODE: ${isRainbowEventActive ? 'АКТИВИРОВАН' : 'ВЫКЛЮЧЕН'}`, false);
+                        }
+                        if (wasSilentActive !== isSilentEventActive) {
+                            addSystemMessage(`SILENT MODE: ${isSilentEventActive ? 'АКТИВИРОВАН' : 'ВЫКЛЮЧЕН'}`, false);
+                        }
+                        if (wasMusicActive !== isMusicEventActive) {
+                            addSystemMessage(`BACKGROUND MUSIC: ${isMusicEventActive ? 'АКТИВИРОВАН' : 'ВЫКЛЮЧЕН'}`, false);
+                        }
+                    }
                     
                     applyRainbowEvent(isRainbowEventActive);
                     applySilentEvent(isSilentEventActive);
@@ -971,12 +1400,23 @@
                         lastProcessedBroadcastId = broadcastId;
                         
                         if (broadcast.text && broadcast.sender) {
+                            // Админские рассылки видны всем пользователям
                             addSystemMessage(`АДМИН [${broadcast.sender}]: ${broadcast.text}`, false);
                             
                             if (!isSilentEventActive) {
                                 playTone(1000, 0.1);
                                 setTimeout(() => playTone(800, 0.1), 100);
                             }
+                            
+                            // УДАЛЕНИЕ ЧЕРЕЗ 6 СЕКУНД
+                            setTimeout(async () => {
+                                try {
+                                    await deleteDoc(doc(adminBroadcastsRef, broadcastId));
+                                    console.log(`Админское сообщение ${broadcastId} удалено через 6 секунд`);
+                                } catch (error) {
+                                    console.error(`Ошибка удаления сообщения ${broadcastId}:`, error);
+                                }
+                            }, 6000);
                         }
                     }
                 });
@@ -1003,7 +1443,8 @@
                     ...currentData,
                     [eventName]: value,
                     lastUpdated: serverTimestamp(),
-                    updatedBy: currentUsername
+                    updatedBy: currentUsername,
+                    sessionId: localSessionId
                 }, { merge: true });
                 
                 const eventNames = {
@@ -1158,13 +1599,23 @@
             try {
                 const adminBroadcastsRef = collection(db, 'artifacts', appId, 'public', 'data', 'admin_broadcasts');
                 
-                await addDoc(adminBroadcastsRef, {
+                const broadcastDoc = await addDoc(adminBroadcastsRef, {
                     text: broadcastText,
                     sender: currentUsername,
                     timestamp: serverTimestamp(),
                     type: 'admin_broadcast',
                     sessionId: localSessionId
                 });
+                
+                // УДАЛЕНИЕ ЧЕРЕЗ 6 СЕКУНД
+                setTimeout(async () => {
+                    try {
+                        await deleteDoc(doc(adminBroadcastsRef, broadcastDoc.id));
+                        console.log(`Админское сообщение ${broadcastDoc.id} удалено через 6 секунд`);
+                    } catch (error) {
+                        console.error(`Ошибка удаления сообщения ${broadcastDoc.id}:`, error);
+                    }
+                }, 6000);
                 
                 const sendBtn = document.querySelector('button[onclick="sendAdminBroadcast()"]');
                 const originalText = sendBtn.textContent;
@@ -1368,7 +1819,7 @@
                     <!-- СИСТЕМНЫЕ СООБЩЕНИЯ -->
                     <div>
                         <h3 class="text-lg font-bold text-yellow-300 mb-4 border-b border-yellow-800 pb-2">
-                            СИСТЕМНЫЕ СООБЩЕНИЯ
+                            СИСТЕМНЫЕ СООБЩЕНИЕ
                         </h3>
                         
                         <div class="mb-4">
@@ -1734,7 +2185,21 @@
         }
 
         function addSystemMessage(text, isError = false) {
+            // Если отключены уведомления в настройках, не показываем ничего
             if (!userSettings.notifications) return;
+            
+            // Проверяем, является ли текст уведомлением о событиях админа
+            const isAdminEventNotification = 
+                text.includes("RAINBOW MODE:") || 
+                text.includes("SILENT MODE:") || 
+                text.includes("BACKGROUND MUSIC:") ||
+                text.includes("ФОНОВАЯ МУЗЫКА ВКЛЮЧЕНА") ||
+                text.includes("ФОНОВАЯ МУЗЫКА ВЫКЛЮЧЕНА");
+            
+            // Если это уведомление о событии админа, показываем только пользователю WINTER
+            if (isAdminEventNotification && currentUsername !== 'WINTER') {
+                return;
+            }
             
             const notification = document.createElement('div');
             notification.className = `notification-item text-sm border-l-4 pl-2 ${isError ? 'text-red-300 border-red-500' : 'text-green-300 border-green-500'}`;
@@ -2143,32 +2608,36 @@
             }
         }
         
+        // ОБНОВЛЕННАЯ ФУНКЦИЯ ДЛЯ ПЕРЕТАСКИВАНИЯ НА ТЕЛЕФОНЕ
         function makeDraggable(element) {
             let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
             const dragHeader = element.querySelector('.drag-handle');
             
-            if (dragHeader) {
-                dragHeader.onmousedown = dragMouseDown;
-            } else {
-                element.onmousedown = dragMouseDown;
-            }
-
             function dragMouseDown(e) {
                 e = e || window.event;
                 e.preventDefault();
-                pos3 = e.clientX;
-                pos4 = e.clientY;
+                pos3 = e.clientX || e.touches[0].clientX;
+                pos4 = e.clientY || e.touches[0].clientY;
                 document.onmouseup = closeDragElement;
                 document.onmousemove = elementDrag;
+                document.ontouchend = closeDragElement;
+                document.ontouchmove = elementDrag;
+                element.classList.add('dragging');
             }
 
             function elementDrag(e) {
                 e = e || window.event;
                 e.preventDefault();
-                pos1 = pos3 - e.clientX;
-                pos2 = pos4 - e.clientY;
-                pos3 = e.clientX;
-                pos4 = e.clientY;
+                const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+                const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+                
+                if (!clientX || !clientY) return;
+                
+                pos1 = pos3 - clientX;
+                pos2 = pos4 - clientY;
+                pos3 = clientX;
+                pos4 = clientY;
+                
                 element.style.top = (element.offsetTop - pos2) + "px";
                 element.style.left = (element.offsetLeft - pos1) + "px";
             }
@@ -2176,7 +2645,85 @@
             function closeDragElement() {
                 document.onmouseup = null;
                 document.onmousemove = null;
+                document.ontouchend = null;
+                document.ontouchmove = null;
+                element.classList.remove('dragging');
             }
+
+            if (dragHeader) {
+                dragHeader.onmousedown = dragMouseDown;
+                dragHeader.ontouchstart = dragMouseDown;
+            } else {
+                element.onmousedown = dragMouseDown;
+                element.ontouchstart = dragMouseDown;
+            }
+        }
+
+        // ФУНКЦИЯ ДЛЯ ИЗМЕНЕНИЯ РАЗМЕРА ОКНА
+        function makeResizable(element) {
+            const resizeHandle = document.createElement('div');
+            resizeHandle.className = 'resize-handle absolute bottom-0 right-0 w-6 h-6 cursor-se-resize text-green-500 text-xs flex items-center justify-center';
+            resizeHandle.innerHTML = '↘';
+            resizeHandle.title = 'Изменение размера (зажмите и тяните)';
+            element.appendChild(resizeHandle);
+
+            let startX, startY, startWidth, startHeight;
+
+            function startResize(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                startX = e.clientX || e.touches[0].clientX;
+                startY = e.clientY || e.touches[0].clientY;
+                startWidth = parseInt(document.defaultView.getComputedStyle(element).width, 10);
+                startHeight = parseInt(document.defaultView.getComputedStyle(element).height, 10);
+                
+                document.documentElement.addEventListener('mousemove', resize);
+                document.documentElement.addEventListener('mouseup', stopResize);
+                document.documentElement.addEventListener('touchmove', resize);
+                document.documentElement.addEventListener('touchend', stopResize);
+                
+                element.classList.add('resizing');
+            }
+
+            function resize(e) {
+                e.preventDefault();
+                
+                const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+                const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+                
+                if (!clientX || !clientY) return;
+                
+                const dx = clientX - startX;
+                const dy = clientY - startY;
+                
+                const newWidth = Math.max(200, Math.min(window.innerWidth - 50, startWidth + dx));
+                const newHeight = Math.max(150, Math.min(window.innerHeight - 100, startHeight + dy));
+                
+                element.style.width = newWidth + 'px';
+                element.style.height = newHeight + 'px';
+            }
+
+            function stopResize() {
+                document.documentElement.removeEventListener('mousemove', resize);
+                document.documentElement.removeEventListener('mouseup', stopResize);
+                document.documentElement.removeEventListener('touchmove', resize);
+                document.documentElement.removeEventListener('touchend', stopResize);
+                
+                element.classList.remove('resizing');
+                
+                // Сохраняем размер в localStorage
+                const sessionId = element.id.replace('window-', '');
+                const sizes = JSON.parse(localStorage.getItem('window_sizes') || '{}');
+                sizes[sessionId] = {
+                    width: element.style.width,
+                    height: element.style.height
+                };
+                localStorage.setItem('window_sizes', JSON.stringify(sizes));
+            }
+
+            resizeHandle.addEventListener('mousedown', startResize);
+            resizeHandle.addEventListener('touchstart', startResize);
         }
 
         function ensureMediaWindow(sessionId, username, stream, type, isLocal = false) {
@@ -2203,10 +2750,22 @@
                 windowElement.id = windowId;
                 windowElement.className = "floating-window fixed border-2 border-green-700 bg-black/95 shadow-[0_0_15px_rgba(0,255,0,0.5)] z-50 transition-transform duration-300 ease-in-out";
                 
+                // Загружаем сохранённый размер окна
+                const sizes = JSON.parse(localStorage.getItem('window_sizes') || '{}');
+                if (sizes[sessionId]) {
+                    windowElement.style.width = sizes[sessionId].width;
+                    windowElement.style.height = sizes[sessionId].height;
+                } else {
+                    windowElement.style.width = '400px';
+                    windowElement.style.height = '300px';
+                }
+                
+                // Позиционируем окна с небольшим смещением
                 const numWindows = document.querySelectorAll('.floating-window').length;
-                const offset = (numWindows % 4) * 30;
-                windowElement.style.top = `${50 + offset}px`;
-                windowElement.style.right = `${50 + offset}px`;
+                const offsetX = (numWindows % 4) * 30;
+                const offsetY = (numWindows % 3) * 30;
+                windowElement.style.top = `${100 + offsetY}px`;
+                windowElement.style.left = `${50 + offsetX}px`;
 
                 const displayUsername = isLocal ? 'YOUR SCREEN' : `${username}'s SCREEN`;
                 windowElement.innerHTML = `
@@ -2214,13 +2773,15 @@
                         <span class="text-green-300">${isLocal ? '>> ' : '<< '}${displayUsername}</span>
                         <button onclick="removeMediaWindow('${sessionId}', true)" class="text-red-500 hover:text-red-300 transition-colors">[ X ]</button>
                     </div>
-                    <div class="video-content w-full h-full">
+                    <div class="video-content w-full h-full" style="height: calc(100% - 30px);">
                         <video id="${mediaId}" autoplay playsinline class="w-full h-full object-contain"></video>
                     </div>
                 `;
                 
                 floatingVideosContainer.appendChild(windowElement);
                 makeDraggable(windowElement);
+                makeResizable(windowElement);
+                
                 if (!isLocal) addSystemMessage(`ПОЛУЧЕН ВИДЕО ПОТОК (ЭКРАН) ОТ ${username}.`);
             }
 
@@ -2281,7 +2842,7 @@
         
         async function startScreenShare() {
             if (!currentVoiceChannel) {
-                addSystemMessage("ОШИБКА: СНАЧАЛА ПОДКЛЮЧИТЕСЬ К ГОЛОСОВОМУ КАНАЛУ.", true);
+                addSystemMessage("ОШИБКА: СНАЧАЛА ПОДКЛЮЧИТЕСЬ К ГОЛСОВОМУ КАНАЛУ.", true);
                 return;
             }
             if (isSharingScreen) return;
@@ -2531,13 +3092,26 @@
         }
 
         .floating-window {
-            width: 280px;
-            height: 180px; 
+            width: 400px;
+            height: 300px;
             background-color: #000000;
             opacity: 0.95;
             box-shadow: 0 0 15px rgba(0, 255, 0, 0.5);
             min-width: 200px;
             min-height: 150px;
+            max-width: 90vw;
+            max-height: 90vh;
+            resize: none !important; /* Отключаем стандартный resize */
+            overflow: hidden;
+        }
+        
+        .floating-window.resizing {
+            z-index: 9999 !important;
+            opacity: 0.8;
+        }
+        
+        .floating-window.dragging {
+            z-index: 9998 !important;
         }
         
         body.theme-white .floating-window {
@@ -2552,6 +3126,7 @@
             user-select: none;
             background-color: rgba(0, 50, 0, 0.8);
             cursor: move;
+            touch-action: none;
         }
         
         body.theme-white .floating-window .drag-handle {
@@ -2567,6 +3142,18 @@
             height: 100%;
             display: block;
             background: black;
+        }
+        
+        /* Стили для изменения размера */
+        .resize-handle {
+            touch-action: none;
+            z-index: 1000;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+        
+        .resize-handle:hover {
+            opacity: 1;
         }
         
         /* Голосовые сообщения */
@@ -2675,21 +3262,42 @@
             background-color: currentColor !important;
         }
         
-        /* Стили для разных тем в тексте */
-        body.theme-white .text-green-300,
-        body.theme-white .text-green-400,
-        body.theme-white .text-green-500,
-        body.theme-white .text-green-700,
-        body.theme-white .text-green-100 {
-            color: var(--terminal-color) !important;
+        /* Стили для плагинов */
+        .plugin-style {
+            position: fixed;
+            top: -9999px;
+            left: -9999px;
+            visibility: hidden;
+            z-index: -1;
         }
         
-        body.theme-red .text-green-300,
-        body.theme-red .text-green-400,
-        body.theme-red .text-green-500,
-        body.theme-red .text-green-700,
-        body.theme-red .text-green-100 {
-            color: var(--terminal-color) !important;
+        /* Улучшенная поддержка тач-устройств */
+        @media (hover: none) and (pointer: coarse) {
+            .floating-window {
+                min-width: 300px;
+                min-height: 200px;
+            }
+            
+            .resize-handle {
+                width: 40px;
+                height: 40px;
+                font-size: 16px;
+            }
+            
+            .drag-handle {
+                padding: 10px;
+                font-size: 14px;
+            }
+        }
+        
+        /* Анимация для кнопки плагинов */
+        #plugins-button:hover {
+            animation: pulse-purple 0.5s infinite alternate;
+        }
+        
+        @keyframes pulse-purple {
+            from { transform: scale(1); }
+            to { transform: scale(1.2); }
         }
         
         /* Новые стили для ограничения размеров панелей */
