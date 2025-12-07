@@ -48,8 +48,19 @@
         }
 
         // --- ПЕРСИСТЕНТНЫЙ ACCOUNT SID (постоянный для учётной записи) ---
-        // Сохраняется в localStorage и в документе пользователя как `accountSid`.
-        let accountSid = localStorage.getItem('slax_account_sid') || null;
+        // Will be set after login/registration. Stored per-username in localStorage under key `slax_account_sid_<USERNAME>`.
+        let accountSid = null;
+
+        function accountKeyFor(username) {
+            if (!username) return null;
+            return `slax_account_sid_${username}`;
+        }
+        function saveAccountSidForUser(username, sid) {
+            try { if (username && sid) localStorage.setItem(accountKeyFor(username), sid); } catch(e) { console.warn('saveAccountSidForUser failed', e); }
+        }
+        function loadAccountSidForUser(username) {
+            try { return username ? localStorage.getItem(accountKeyFor(username)) : null; } catch(e) { return null; }
+        }
         
         // --- СОСТОЯНИЕ ---
         let currentUser = null; 
@@ -310,17 +321,24 @@
                 }
                 
                 const userData = snapshot.docs[0].data();
-                if (userData.password === password) {
+                    if (userData.password === password) {
                     currentUsername = name;
                     const userDocRef = doc(usersRef, name);
-                    // ensure accountSid exists for persistent identity
+                    // load accountSid from user doc (authoritative) or localStorage mapping
                     if (userData.accountSid) {
                         accountSid = userData.accountSid;
-                        localStorage.setItem('slax_account_sid', accountSid);
+                        saveAccountSidForUser(name, accountSid);
                     } else {
-                        accountSid = crypto.randomUUID();
-                        try { await updateDoc(userDocRef, { accountSid }); } catch(e){ console.warn('failed to update accountSid on login', e); }
-                        localStorage.setItem('slax_account_sid', accountSid);
+                        // fallback: try to load previously saved value for this username
+                        const saved = loadAccountSidForUser(name);
+                        if (saved) {
+                            accountSid = saved;
+                            try { await updateDoc(userDocRef, { accountSid }); } catch(e){ console.warn('failed to update accountSid from localStorage', e); }
+                        } else {
+                            accountSid = crypto.randomUUID();
+                            try { await updateDoc(userDocRef, { accountSid }); } catch(e){ console.warn('failed to update accountSid on login', e); }
+                            saveAccountSidForUser(name, accountSid);
+                        }
                     }
                     
                     // Загружаем настройки пользователя если есть
@@ -378,7 +396,7 @@
                 
                 currentUsername = name;
                 accountSid = newAccountSid;
-                localStorage.setItem('slax_account_sid', accountSid);
+                saveAccountSidForUser(name, accountSid);
                 loginError.textContent = `ПОЛЬЗОВАТЕЛЬ ${name} УСПЕШНО СОЗДАН.`;
                 grantAccess();
 
@@ -408,6 +426,12 @@
             // Инициализация системы друзей и серверов
             initializeFriendsSystem();
             initializeServersSystem();
+
+            // attempt to load accountSid mapping for current user (in case login flow didn't set it)
+            if (!accountSid && currentUsername && currentUsername !== 'GUEST') {
+                const saved = loadAccountSidForUser(currentUsername);
+                if (saved) accountSid = saved;
+            }
             
             // Применяем сохраненную тему
             applyTheme(userSettings.theme);
@@ -2580,10 +2604,31 @@ body {
             
             playTone(1200, 0.05);
             subscribeToMessages();
+            renderDMCallButton(channelName);
             
             if (isSidebarOpen && window.innerWidth < 768) {
                 toggleSidebar();
             }
+        }
+
+        // Render a small call button when viewing a DM channel
+        function renderDMCallButton(channelName) {
+            const existing = document.getElementById('dm-call-button');
+            if (existing) existing.remove();
+            if (!channelName || !channelName.startsWith('dm:')) return;
+            const targetId = channelName.split(':')[1];
+            const inputContainer = document.getElementById('message-input').parentElement;
+            if (!inputContainer) return;
+            const btn = document.createElement('button');
+            btn.id = 'dm-call-button';
+            btn.className = 'ml-2 bg-green-700 text-black px-3 py-1 text-xs border border-green-900 rounded';
+            btn.textContent = 'call';
+            btn.onclick = () => {
+                if (!targetId) { addSystemMessage('НЕТ ЦЕЛИ ДЛЯ ЗВОНКА', true); return; }
+                sendCallRequest(targetId);
+            };
+            // append after input container
+            inputContainer.after(btn);
         }
 
         function subscribeToMessages() {
@@ -2923,6 +2968,9 @@ body {
 
                 subscribeToVoiceSession(voiceId);
                 subscribeToSignaling();
+
+                // show mini voice widget in sidebar for quick access
+                showMiniVoiceWidget(voiceId);
                 
                 addSystemMessage(`ГОЛОСОВОЙ УЗЕЛ ${voiceId.toUpperCase()} АКТИВЕН.`);
                 playTone(400, 0.1);
@@ -2979,6 +3027,7 @@ body {
 
             currentVoiceChannel = null;
             voiceStatusPanel.classList.add('hidden');
+            hideMiniVoiceWidget();
             addSystemMessage(`ГОЛОСОВОЙ УЗЕЛ ОТКЛЮЧЕН.`);
             playTone(300, 0.2);
         }
@@ -3045,6 +3094,39 @@ body {
                 }
                 
             }, (err) => console.error("Ошибка подписки на сессию:", err));
+        }
+
+        // Mini voice widget shown at bottom of sidebar when in a voice call
+        function showMiniVoiceWidget(voiceId) {
+            try {
+                hideMiniVoiceWidget();
+                const sidebarEl = document.getElementById('sidebar');
+                if (!sidebarEl) return;
+                const widget = document.createElement('div');
+                widget.id = 'mini-voice-widget';
+                widget.className = 'p-2 border-t border-green-900 bg-[#051105] text-sm';
+                widget.innerHTML = `
+                    <div class="flex justify-between items-center">
+                        <div class="text-xs opacity-70">CALL: <span class="font-bold">${voiceId.slice(0,12)}</span></div>
+                        <div class="space-x-2">
+                            <button id="mini-mic-toggle" class="px-2 py-0.5 border border-green-700 text-xs">MIC</button>
+                            <button id="mini-leave-btn" class="px-2 py-0.5 border border-red-700 text-xs">LEAVE</button>
+                        </div>
+                    </div>
+                `;
+                // insert before user info block (last child)
+                const userInfo = sidebarEl.querySelector('.p-3.border-t-2.border-green-900');
+                if (userInfo) sidebarEl.insertBefore(widget, userInfo);
+                else sidebarEl.appendChild(widget);
+
+                document.getElementById('mini-leave-btn').onclick = () => { leaveVoice(); };
+                document.getElementById('mini-mic-toggle').onclick = () => { toggleMic(); };
+            } catch(e) { console.warn('showMiniVoiceWidget error', e); }
+        }
+
+        function hideMiniVoiceWidget() {
+            const ex = document.getElementById('mini-voice-widget');
+            if (ex) ex.remove();
         }
         
         function subscribeToSignaling() {
