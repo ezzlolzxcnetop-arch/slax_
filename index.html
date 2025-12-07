@@ -432,6 +432,20 @@
                 const saved = loadAccountSidForUser(currentUsername);
                 if (saved) accountSid = saved;
             }
+
+            // add small debug button near SID display for troubleshooting
+            try {
+                const uidEl = document.getElementById('display-uid');
+                if (uidEl && !document.getElementById('identity-debug-btn')) {
+                    const b = document.createElement('button');
+                    b.id = 'identity-debug-btn';
+                    b.className = 'ml-2 text-xs text-yellow-300';
+                    b.textContent = '[i]';
+                    b.title = 'Show identity debug info';
+                    b.onclick = () => showIdentityInfo();
+                    uidEl.appendChild(b);
+                }
+            } catch(e) { console.warn('failed to add identity debug button', e); }
             
             // Применяем сохраненную тему
             applyTheme(userSettings.theme);
@@ -864,7 +878,7 @@ body {
             else { panel.classList.remove('flex'); panel.classList.add('hidden'); }
         }
 
-        async function sendFriendRequestBySid() {
+        window.sendFriendRequestBySid = async function() {
             const sid = document.getElementById('friend-sid-input').value.trim();
             if (!sid || sid.length < 4) { addSystemMessage('ВВЕДИТЕ КОРРЕКТНЫЙ SID', true); return; }
             const normalized = sid.toLowerCase();
@@ -948,7 +962,7 @@ body {
             } catch(e) { console.error('subscribeToFriendRequests error', e); }
         }
 
-        async function acceptFriendRequest(requestId) {
+        window.acceptFriendRequest = async function(requestId) {
             try {
                 const reqRef = doc(db, 'artifacts', appId, 'public', 'data', 'friend_requests', requestId);
                 const reqSnap = await getDoc(reqRef);
@@ -969,7 +983,7 @@ body {
             } catch (e) { console.error('acceptFriendRequest', e); addSystemMessage('ОШИБКА', true); }
         }
 
-        async function declineFriendRequest(requestId) {
+        window.declineFriendRequest = async function(requestId) {
             try {
                 const reqRef = doc(db, 'artifacts', appId, 'public', 'data', 'friend_requests', requestId);
                 await updateDoc(reqRef, { status: 'declined' });
@@ -1033,7 +1047,7 @@ body {
             } catch(e) { console.error('subscribeToFriendsList', e); }
         }
 
-        async function removeFriend(sid) {
+        window.removeFriend = async function(sid) {
             try {
                 const friendsRef = collection(db, 'artifacts', appId, 'public', 'data', 'friends');
                 const myId = accountSid || localSessionId;
@@ -1045,7 +1059,7 @@ body {
         }
 
         // --- CALLS ---
-        async function sendCallRequest(targetSessionId) {
+        window.sendCallRequest = async function(targetSessionId) {
             if (!targetSessionId) return;
             try {
                 const callsRef = collection(db, 'artifacts', appId, 'public', 'data', 'call_requests');
@@ -1213,7 +1227,7 @@ body {
 
         window.toggleServersPanel = function() { const p = document.getElementById('servers-panel'); if (!p) return; const open = p.classList.contains('hidden'); if (open) { p.classList.remove('hidden'); p.classList.add('flex'); } else { p.classList.remove('flex'); p.classList.add('hidden'); } }
 
-        async function createServer() {
+        window.createServer = async function() {
             const name = document.getElementById('server-name-input').value.trim();
             const textChan = document.getElementById('server-text-channel-input').value.trim() || 'general';
             const voiceChan = document.getElementById('server-voice-channel-input').value.trim() || 'vc1';
@@ -1250,7 +1264,7 @@ body {
         }
 
             // Open a server management modal
-            async function openServerModal(serverId) {
+            window.openServerModal = async function(serverId) {
                 try {
                     const sRef = doc(db, 'artifacts', appId, 'public', 'data', 'servers', serverId);
                     const sSnap = await getDoc(sRef);
@@ -2730,6 +2744,21 @@ body {
                 chatContainer.appendChild(div);
             });
             chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        // Debug helper: show current identity values
+        function showIdentityInfo() {
+            const info = {
+                currentUsername,
+                accountSid: accountSid || loadAccountSidForUser(currentUsername) || null,
+                localSessionId,
+                localStorageKeys: Object.keys(localStorage).filter(k => k.startsWith('slax_account_sid'))
+            };
+            const pretty = Object.entries(info).map(([k,v]) => `${k}: ${JSON.stringify(v)}`).join('\n');
+            // show as alert and system message
+            try { alert(pretty); } catch(e) { console.log(pretty); }
+            addSystemMessage('IDENTITY INFO SHOWN IN CONSOLE/ALERT', false);
+            console.log('IDENTITY DEBUG:', info);
         }
 
         // Функция для создания визуализатора для сообщений
