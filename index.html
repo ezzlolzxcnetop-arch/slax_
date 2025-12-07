@@ -14,7 +14,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, setDoc, doc, query, onSnapshot, serverTimestamp, getDocs, where, limit, deleteDoc, updateDoc, getDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, setDoc, doc, query, onSnapshot, serverTimestamp, getDocs, where, limit, deleteDoc, updateDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // --- КОНФИГУРАЦИЯ ---
         const firebaseConfig = {
@@ -40,15 +40,12 @@
             ]
         };
 
-        // --- Уникальный ID сессии для вкладки (tab session) ---
+        // --- КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Уникальный ID сессии для вкладки ---
         let localSessionId = sessionStorage.getItem('slax_session_id');
         if (!localSessionId) {
             localSessionId = crypto.randomUUID();
             sessionStorage.setItem('slax_session_id', localSessionId);
         }
-
-        // --- ACCOUNT SID: статичный идентификатор аккаунта (будет храниться в документе пользователя) ---
-        let accountSid = null; // уникальный SID для аккаунта (не меняется после генерации)
         
         // --- СОСТОЯНИЕ ---
         let currentUser = null; 
@@ -314,16 +311,7 @@
                         userPlugins = userData.plugins;
                         applyUserPlugins();
                     }
-                    // Ensure account SID exists and is static
-                    if (userData.sid) {
-                        accountSid = userData.sid;
-                    } else {
-                        accountSid = crypto.randomUUID();
-                        try { await updateDoc(doc(usersRef, name), { sid: accountSid }); } catch(e) { console.warn('Не удалось записать sid:', e); }
-                    }
-
-                    displayUid.textContent = `SID: ${String(accountSid).slice(0,8).toUpperCase()}`;
-
+                    
                     grantAccess();
                 } else {
                     loginError.textContent = "ОШИБКА: ПАРОЛЬ НЕВЕРЕН.";
@@ -359,20 +347,11 @@
                     username: name,
                     password: password,
                     settings: userSettings,
-                    sid: (crypto.randomUUID()),
                     plugins: userPlugins,
                     createdAt: serverTimestamp()
                 });
                 
                 currentUsername = name;
-                // Load SID just created
-                const userDocRef = doc(usersRef, name);
-                const userSnap = await getDoc(userDocRef);
-                if (userSnap.exists()) {
-                    const data = userSnap.data();
-                    accountSid = data.sid || null;
-                    displayUid.textContent = accountSid ? `SID: ${String(accountSid).slice(0,8).toUpperCase()}` : displayUid.textContent;
-                }
                 loginError.textContent = `ПОЛЬЗОВАТЕЛЬ ${name} УСПЕШНО СОЗДАН.`;
                 grantAccess();
 
@@ -398,12 +377,6 @@
             
             // Инициализация системы плагинов
             initializePluginsSystem();
-
-            // Инициализация системы друзей и вызовов
-            initializeFriendsSystem();
-
-            // Инициализация системы серверов
-            initializeServersSystem();
             
             // Применяем сохраненную тему
             applyTheme(userSettings.theme);
@@ -628,460 +601,6 @@ body {
                 }
             }
         }
-
-        // --- FRIENDS & CALLS SYSTEM ---
-        let friendsButton = null;
-        let friendsPanel = null;
-        let incomingCallPanel = null;
-        let callRequestsUnsubscribe = null;
-        let friendRequestsUnsubscribe = null;
-        let userDocUnsubscribe = null;
-
-        function initializeFriendsSystem() {
-            createFriendsButton();
-            createFriendsPanel();
-            createIncomingCallPanel();
-            // Subscribe to own user document to update friends list live and learn accountSid
-            const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'app_users');
-            const userDocRef = doc(usersRef, currentUsername);
-            if (userDocUnsubscribe) userDocUnsubscribe();
-            userDocUnsubscribe = onSnapshot(userDocRef, (snap) => {
-                if (snap.exists()) {
-                    const data = snap.data();
-                    if (data.sid) {
-                        accountSid = data.sid;
-                        displayUid.textContent = `SID: ${String(accountSid).slice(0,8).toUpperCase()}`;
-                    }
-                    updateFriendsPanel(data.friends || {});
-                }
-                // Once we know our SID, subscribe to incoming requests and calls
-                subscribeToFriendRequests();
-                subscribeToCallRequests();
-            });
-
-            // Ensure signaling listener is active so direct calls can arrive
-            subscribeToSignaling();
-        }
-
-        function createFriendsButton() {
-            const userInfo = document.querySelector('.p-3.border-t-2.border-green-900');
-            if (!userInfo) return;
-            friendsButton = document.createElement('button');
-            friendsButton.id = 'friends-button';
-            friendsButton.className = 'mr-2 text-cyan-400 hover:text-cyan-300 transition-colors text-sm';
-            friendsButton.innerHTML = '👥';
-            friendsButton.title = 'Друзья';
-            friendsButton.onclick = toggleFriendsPanel;
-
-            const userContainer = userInfo.querySelector('.flex.items-center');
-            if (userContainer) {
-                userContainer.insertBefore(friendsButton, userContainer.firstChild);
-            }
-        }
-
-        function createFriendsPanel() {
-            friendsPanel = document.createElement('div');
-            friendsPanel.id = 'friends-panel';
-            friendsPanel.className = 'fixed inset-0 z-50 hidden flex items-center justify-center bg-black/90';
-            friendsPanel.innerHTML = `
-                <div class="w-11/12 max-w-2xl max-h-[90vh] overflow-y-auto border-2 border-cyan-600 bg-black/95 p-6">
-                    <div class="flex justify-between items-center mb-4">
-                        <h2 class="text-xl font-bold text-cyan-400">>> FRIENDS</h2>
-                        <button onclick="toggleFriendsPanel()" class="text-cyan-500 hover:text-cyan-300 text-lg">[ X ]</button>
-                    </div>
-                    <div class="h-px w-full bg-cyan-900 mb-4"></div>
-
-                    <div class="mb-4">
-                        <label class="text-sm text-cyan-300">Добавить друга по SID:</label>
-                        <div class="flex items-center mt-2">
-                            <input id="friend-sid-input" class="flex-1 bg-black border border-cyan-800 text-cyan-300 p-2 rounded mr-2" placeholder="AB12CD34..." />
-                            <button onclick="sendFriendRequestBySid()" class="px-3 py-1 border border-cyan-600">Добавить</button>
-                        </div>
-                        <div class="text-xs text-cyan-600 mt-2">SID отображается рядом с никнеймом и является постоянным.</div>
-                    </div>
-
-                    <div class="mb-4">
-                        <h3 class="text-sm font-bold text-cyan-300 mb-2">Запросы в друзья (входящие)</h3>
-                        <div id="friend-requests-list" class="space-y-2 text-sm text-cyan-200"></div>
-                    </div>
-
-                    <div class="mb-4">
-                        <h3 class="text-sm font-bold text-cyan-300 mb-2">Друзья</h3>
-                        <div id="friends-list" class="space-y-2 text-sm text-cyan-200"></div>
-                    </div>
-
-                    <div class="flex justify-end">
-                        <button onclick="toggleFriendsPanel()" class="px-4 py-2 border border-gray-600">Закрыть</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(friendsPanel);
-        }
-
-        window.toggleFriendsPanel = function() {
-            if (!friendsPanel) return;
-            const open = friendsPanel.classList.contains('hidden');
-            if (open) { friendsPanel.classList.remove('hidden'); friendsPanel.classList.add('flex'); }
-            else { friendsPanel.classList.remove('flex'); friendsPanel.classList.add('hidden'); }
-        }
-
-        window.sendFriendRequestBySid = async function() {
-            const sid = document.getElementById('friend-sid-input').value.trim();
-            if (!sid) { addSystemMessage('Введите SID', true); return; }
-            if (sid === accountSid) { addSystemMessage('Нельзя добавить себя', true); return; }
-
-            const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'app_users');
-            const q = query(usersRef, where('sid', '==', sid), limit(1));
-            try {
-                const snap = await getDocs(q);
-                if (snap.empty) { addSystemMessage('Пользователь с таким SID не найден', true); return; }
-                const userDoc = snap.docs[0];
-                const toUsername = userDoc.id;
-
-                // Создаём запрос
-                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'friend_requests'), {
-                    fromUsername: currentUsername,
-                    fromSid: accountSid,
-                    toUsername: toUsername,
-                    toSid: sid,
-                    status: 'pending',
-                    timestamp: serverTimestamp()
-                });
-
-                addSystemMessage('Запрос отправлен', false);
-                document.getElementById('friend-sid-input').value = '';
-            } catch (e) {
-                console.error('Ошибка отправки запроса в друзья:', e);
-                addSystemMessage('Ошибка отправки запроса', true);
-            }
-        }
-
-        function updateFriendsPanel(friendsMap) {
-            const list = document.getElementById('friends-list');
-            if (!list) return;
-            list.innerHTML = '';
-            const keys = Object.keys(friendsMap || {});
-            if (keys.length === 0) {
-                list.innerHTML = '<div class="text-xs opacity-60">Список пуст</div>';
-                return;
-            }
-            keys.forEach(sid => {
-                const name = friendsMap[sid];
-                const div = document.createElement('div');
-                div.className = 'flex justify-between items-center border border-cyan-800 p-2 rounded';
-                div.innerHTML = `<div><strong>${name}</strong> <span class="text-xs opacity-60">${sid.slice(0,8).toUpperCase()}</span></div>`;
-                const btns = document.createElement('div');
-                const callBtn = document.createElement('button');
-                callBtn.textContent = 'Позвонить';
-                callBtn.className = 'px-2 py-1 border border-cyan-600 mr-2 text-xs';
-                callBtn.onclick = () => sendCallRequestToSid(sid, name);
-                btns.appendChild(callBtn);
-                div.appendChild(btns);
-                list.appendChild(div);
-            });
-        }
-
-        function subscribeToFriendRequests() {
-            const reqRef = collection(db, 'artifacts', appId, 'public', 'data', 'friend_requests');
-            const qIncoming = query(reqRef, where('toSid', '==', accountSid || ''), where('status', '==', 'pending'));
-
-            if (friendRequestsUnsubscribe) friendRequestsUnsubscribe();
-            friendRequestsUnsubscribe = onSnapshot(reqRef, (snapshot) => {
-                const incoming = [];
-                snapshot.forEach(doc => {
-                    const d = doc.data();
-                    if (d.toSid === accountSid && d.status === 'pending') incoming.push({ id: doc.id, ...d });
-                });
-                renderFriendRequests(incoming);
-            });
-        }
-
-        function renderFriendRequests(requests) {
-            const container = document.getElementById('friend-requests-list');
-            if (!container) return;
-            container.innerHTML = '';
-            if (!requests.length) { container.innerHTML = '<div class="text-xs opacity-60">Нет входящих запросов</div>'; return; }
-
-            requests.forEach(r => {
-                const el = document.createElement('div');
-                el.className = 'flex justify-between items-center border border-cyan-800 p-2 rounded';
-                el.innerHTML = `<div><strong>${r.fromUsername}</strong> <span class="text-xs opacity-60">${r.fromSid.slice(0,8).toUpperCase()}</span></div>`;
-                const actions = document.createElement('div');
-                const accept = document.createElement('button');
-                accept.className = 'px-2 py-1 border border-green-600 mr-2 text-xs';
-                accept.textContent = 'Принять';
-                accept.onclick = () => respondFriendRequest(r.id, r, true);
-                const decline = document.createElement('button');
-                decline.className = 'px-2 py-1 border border-red-600 text-xs';
-                decline.textContent = 'Отклонить';
-                decline.onclick = () => respondFriendRequest(r.id, r, false);
-                actions.appendChild(accept); actions.appendChild(decline);
-                el.appendChild(actions);
-                container.appendChild(el);
-            });
-        }
-
-        async function respondFriendRequest(requestId, requestData, accept) {
-            const reqRef = doc(db, 'artifacts', appId, 'public', 'data', 'friend_requests', requestId);
-            try {
-                if (accept) {
-                    // Обновляем оба документа пользователей: добавляем в friends map
-                    const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'app_users');
-                    const myDocRef = doc(usersRef, currentUsername);
-                    const otherDocRef = doc(usersRef, requestData.fromUsername);
-
-                    await updateDoc(myDocRef, { [`friends.${requestData.fromSid}`]: requestData.fromUsername });
-                    await updateDoc(otherDocRef, { [`friends.${accountSid}`]: currentUsername });
-
-                    await updateDoc(reqRef, { status: 'accepted', respondedAt: serverTimestamp() });
-                    addSystemMessage('Вы приняли запрос', false);
-                } else {
-                    await updateDoc(reqRef, { status: 'declined', respondedAt: serverTimestamp() });
-                    addSystemMessage('Вы отклонили запрос', false);
-                }
-            } catch (e) {
-                console.error('Ошибка ответа на запрос:', e);
-                addSystemMessage('Ошибка обработки запроса', true);
-            }
-        }
-
-        // --- CALLS: friend-to-friend ring/answer flow ---
-        function createIncomingCallPanel() {
-            incomingCallPanel = document.createElement('div');
-            incomingCallPanel.id = 'incoming-call-panel';
-            incomingCallPanel.className = 'fixed bottom-24 left-1/2 transform -translate-x-1/2 z-60 hidden bg-black/95 border-2 border-cyan-600 p-4 rounded';
-            incomingCallPanel.innerHTML = `
-                <div id="incoming-call-content" class="flex items-center space-x-4">
-                    <div class="text-cyan-300 font-bold">Входящий вызов: <span id="incoming-call-from"></span></div>
-                    <div class="space-x-2">
-                        <button id="accept-call-btn" class="px-3 py-1 border border-green-600">Ответить</button>
-                        <button id="decline-call-btn" class="px-3 py-1 border border-red-600">Отклонить</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(incomingCallPanel);
-            document.getElementById('accept-call-btn').onclick = acceptIncomingCall;
-            document.getElementById('decline-call-btn').onclick = declineIncomingCall;
-        }
-
-        // Subscribe to call_requests collection to detect incoming friend calls
-        function subscribeToCallRequests() {
-            const callsRef = collection(db, 'artifacts', appId, 'public', 'data', 'call_requests');
-            if (callRequestsUnsubscribe) callRequestsUnsubscribe();
-            callRequestsUnsubscribe = onSnapshot(callsRef, async (snapshot) => {
-                snapshot.forEach(async (docSnap) => {
-                    const data = docSnap.data();
-                    if (data.toSid === accountSid && data.status === 'pending') {
-                        // Show incoming call UI
-                        document.getElementById('incoming-call-from').textContent = data.fromUsername;
-                        incomingCallPanel.dataset.callId = docSnap.id;
-                        incomingCallPanel.dataset.callSession = data.sessionId;
-                        incomingCallPanel.dataset.callerSession = data.callerSessionId;
-                        incomingCallPanel.classList.remove('hidden');
-                        incomingCallPanel.classList.add('flex');
-                    }
-                    // If we are the caller, and callee accepted - start connection as initiator
-                    if (data.callerSid === accountSid && data.status === 'accepted') {
-                        const calleeSession = data.calleeSessionId;
-                        if (calleeSession) {
-                            try { localStream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch(e) { }
-                            createPeerConnection(calleeSession, true);
-                            addSystemMessage('Соединение инициировано после принятия', false);
-                        }
-                    }
-                });
-            });
-        }
-
-        async function sendCallRequestToSid(targetSid, targetName) {
-            try {
-                if (!accountSid) { addSystemMessage('Ваш SID не инициализирован', true); return; }
-                const sessionId = crypto.randomUUID();
-                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'call_requests'), {
-                    callerUsername: currentUsername,
-                    callerSid: accountSid,
-                    callerSessionId: localSessionId,
-                    calleeSid: targetSid,
-                    calleeUsername: targetName,
-                    sessionId: sessionId,
-                    status: 'pending',
-                    timestamp: serverTimestamp()
-                });
-                addSystemMessage('Исходящий вызов отправлен', false);
-            } catch (e) {
-                console.error('Ошибка отправки вызова:', e);
-                addSystemMessage('Ошибка вызова', true);
-            }
-        }
-
-        async function acceptIncomingCall() {
-            const callId = incomingCallPanel.dataset.callId;
-            const sessionId = incomingCallPanel.dataset.callSession;
-            const callerSession = incomingCallPanel.dataset.callerSession;
-            if (!callId) return;
-            try {
-                const callRef = doc(db, 'artifacts', appId, 'public', 'data', 'call_requests', callId);
-                await updateDoc(callRef, { status: 'accepted', calleeSessionId: localSessionId, answeredAt: serverTimestamp() });
-
-                // Ensure microphone available
-                try { localStream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch(e) { }
-
-                // Create peer connection: callee should create peerConnection as non-initiator
-                createPeerConnection(callerSession, false);
-
-                incomingCallPanel.classList.remove('flex'); incomingCallPanel.classList.add('hidden');
-                addSystemMessage('Вызов принят, устанавливаем соединение...', false);
-            } catch (e) {
-                console.error('Ошибка принятия вызова:', e);
-                addSystemMessage('Ошибка принятия вызова', true);
-            }
-        }
-
-        async function declineIncomingCall() {
-            const callId = incomingCallPanel.dataset.callId;
-            if (!callId) return;
-            try {
-                const callRef = doc(db, 'artifacts', appId, 'public', 'data', 'call_requests', callId);
-                await updateDoc(callRef, { status: 'declined', respondedAt: serverTimestamp() });
-                incomingCallPanel.classList.remove('flex'); incomingCallPanel.classList.add('hidden');
-                addSystemMessage('Вызов отклонён', false);
-            } catch (e) {
-                console.error('Ошибка отклонения:', e);
-            }
-        }
-
-        // --- SERVERS (guilds) SYSTEM ---
-        let serversButton = null;
-        let serversPanel = null;
-
-        function initializeServersSystem() {
-            createServersButton();
-            createServersPanel();
-            loadServersList();
-        }
-
-        function createServersButton() {
-            const header = document.querySelector('#main-content-area .flex.items-center.space-x-4.text-xs');
-            if (!header) return;
-            serversButton = document.createElement('button');
-            serversButton.id = 'servers-button';
-            serversButton.className = 'border border-cyan-700 px-2 py-0.5 hover:bg-cyan-700 hover:text-black transition-colors text-xs';
-            serversButton.innerHTML = 'SERVERS';
-            serversButton.onclick = toggleServersPanel;
-            header.appendChild(serversButton);
-        }
-
-        function createServersPanel() {
-            serversPanel = document.createElement('div');
-            serversPanel.id = 'servers-panel';
-            serversPanel.className = 'fixed inset-0 z-50 hidden items-center justify-center bg-black/90';
-            serversPanel.innerHTML = `
-                <div class="w-11/12 max-w-3xl max-h-[90vh] overflow-y-auto border-2 border-cyan-700 bg-black/95 p-6">
-                    <div class="flex justify-between items-center mb-4">
-                        <h2 class="text-xl font-bold text-cyan-400">>> SERVERS</h2>
-                        <button onclick="toggleServersPanel()" class="text-cyan-500 hover:text-cyan-300 text-lg">[ X ]</button>
-                    </div>
-                    <div class="h-px w-full bg-cyan-900 mb-4"></div>
-
-                    <div class="mb-4">
-                        <label class="text-sm text-cyan-300">Создать сервер</label>
-                        <div class="flex items-center mt-2">
-                            <input id="server-name-input" class="flex-1 bg-black border border-cyan-800 text-cyan-300 p-2 rounded mr-2" placeholder="Название сервера" />
-                            <button onclick="createServer()" class="px-3 py-1 border border-cyan-600">Создать</button>
-                        </div>
-                        <div class="text-xs text-cyan-600 mt-2">После создания вы сможете добавлять текстовые и голосовые каналы.</div>
-                    </div>
-
-                    <div class="mb-4">
-                        <h3 class="text-sm font-bold text-cyan-300 mb-2">Сервера</h3>
-                        <div id="servers-list" class="space-y-2 text-sm text-cyan-200"></div>
-                    </div>
-
-                    <div class="flex justify-end"><button onclick="toggleServersPanel()" class="px-4 py-2 border border-gray-600">Закрыть</button></div>
-                </div>
-            `;
-            document.body.appendChild(serversPanel);
-        }
-
-        window.toggleServersPanel = function() {
-            if (!serversPanel) return;
-            const isOpen = serversPanel.classList.contains('hidden');
-            if (isOpen) { serversPanel.classList.remove('hidden'); serversPanel.classList.add('flex'); }
-            else { serversPanel.classList.remove('flex'); serversPanel.classList.add('hidden'); }
-        }
-
-        window.createServer = async function() {
-            const name = document.getElementById('server-name-input').value.trim();
-            if (!name) { addSystemMessage('Укажите имя сервера', true); return; }
-            try {
-                const serverRef = await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'servers'), {
-                    name: name,
-                    owner: currentUsername,
-                    textChannels: ['general'],
-                    voiceChannels: ['General'],
-                    createdAt: serverTimestamp()
-                });
-                addSystemMessage('Сервер создан', false);
-                document.getElementById('server-name-input').value = '';
-                loadServersList();
-            } catch (e) {
-                console.error('Ошибка создания сервера:', e);
-                addSystemMessage('Ошибка создания сервера', true);
-            }
-        }
-
-        async function loadServersList() {
-            const listEl = document.getElementById('servers-list');
-            if (!listEl) return;
-            listEl.innerHTML = '';
-            try {
-                const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'servers'));
-                snap.forEach(docSnap => {
-                    const d = docSnap.data();
-                    const el = document.createElement('div');
-                    el.className = 'flex justify-between items-center border border-cyan-800 p-2 rounded';
-                    el.innerHTML = `<div><strong>${d.name}</strong> <span class="text-xs opacity-60">${d.owner}</span></div>`;
-                    const btn = document.createElement('button');
-                    btn.className = 'px-2 py-1 border border-cyan-600 text-xs';
-                    btn.textContent = 'Открыть';
-                    btn.onclick = () => openServer(docSnap.id, d);
-                    el.appendChild(btn);
-                    listEl.appendChild(el);
-                });
-            } catch (e) {
-                console.error('Ошибка загрузки серверов:', e);
-            }
-        }
-
-        function openServer(serverId, serverData) {
-            // Простая интеграция: при открытии сервера заменяем список текстовых/голосовых каналов
-            const textChannelsEl = document.getElementById('text-channels');
-            const voiceChannelsEl = document.getElementById('voice-channels');
-            if (textChannelsEl && voiceChannelsEl) {
-                textChannelsEl.innerHTML = '';
-                serverData.textChannels.forEach(ch => {
-                    const li = document.createElement('li');
-                    li.dataset.channel = ch;
-                    li.className = 'cursor-pointer p-2 hover:bg-green-900/20 transition-all';
-                    li.textContent = `# ${ch.toUpperCase()}`;
-                    li.onclick = () => switchChannel(ch);
-                    textChannelsEl.appendChild(li);
-                });
-
-                voiceChannelsEl.innerHTML = '';
-                serverData.voiceChannels.forEach(vc => {
-                    const li = document.createElement('li');
-                    li.dataset.voice = vc;
-                    li.className = 'cursor-pointer border border-green-900/50 p-2 hover:border-green-500 transition-all group';
-                    li.textContent = vc.toUpperCase();
-                    li.onclick = () => handleVoiceAction(vc.toLowerCase());
-                    voiceChannelsEl.appendChild(li);
-                });
-            }
-            toggleServersPanel();
-            addSystemMessage(`Сервер открыт: ${serverData.name}`, false);
-        }
-
         
         function activatePlugin(pluginId, skipSave = false) {
             if (!availablePlugins[pluginId]) return;
@@ -1276,21 +795,8 @@ body {
                                 <div>
                                     <div class="font-bold text-blue-400">ГОЛОСОВЫЕ СООБЩЕНИЯ</div>
                                     <div class="text-xs text-blue-600">Разрешить отправку голосовых сообщений</div>
-
-                        <!-- ИНСТРУКЦИЯ ПО СОЗДАНИЮ ПЛАГИНОВ -->
-                        <div class="mb-8">
-                            <h3 class="text-lg font-bold text-purple-300 mb-4 border-b border-purple-800 pb-2">КАК СДЕЛАТЬ ПЛАГИН</h3>
-                            <div class="p-4 border-2 border-purple-800 rounded-lg text-xs text-purple-200 font-mono">
-                                <div class="mb-2">1) Плагин представляет собой CSS-код, который безопасно применяется в head сайта.</div>
-                                <div class="mb-2">2) Используйте имена классов с префиксом, чтобы избегать конфликтов.</div>
-                                <div class="mb-2">3) Пример плагина (добавить в поле CSS):</div>
-                                <pre class="bg-black/60 p-2 rounded text-purple-100 text-[12px]">/* Пример: изменить цвет ссылок и шрифт */
                                 </div>
                                 <label class="relative inline-flex items-center cursor-pointer">
-                                <div class="mt-2">4) Тестируйте плагин перед сохранением (кнопка ТЕСТ). Не вводите скрипты — только CSS.</div>
-                                <div class="mt-2">5) Если хотите сохранять плагин между сессиями — отметьте «Сохранять после выхода».</div>
-                            </div>
-                        </div>
                                     <input type="checkbox" id="voice-messages-toggle" class="sr-only peer" ${userSettings.voiceMessagesEnabled ? 'checked' : ''}>
                                     <div class="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                                 </label>
