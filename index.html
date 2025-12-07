@@ -725,7 +725,7 @@ body {
             else { friendsPanel.classList.remove('flex'); friendsPanel.classList.add('hidden'); }
         }
 
-        async function sendFriendRequestBySid() {
+        window.sendFriendRequestBySid = async function() {
             const sid = document.getElementById('friend-sid-input').value.trim();
             if (!sid) { addSystemMessage('Введите SID', true); return; }
             if (sid === accountSid) { addSystemMessage('Нельзя добавить себя', true); return; }
@@ -1010,7 +1010,7 @@ body {
             else { serversPanel.classList.remove('flex'); serversPanel.classList.add('hidden'); }
         }
 
-        async function createServer() {
+        window.createServer = async function() {
             const name = document.getElementById('server-name-input').value.trim();
             if (!name) { addSystemMessage('Укажите имя сервера', true); return; }
             try {
